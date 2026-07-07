@@ -177,6 +177,9 @@ FRAME_OPTION_ACTIONS = ["idle", "walk", "run", "attack", "hit", "death", "look",
 # parseDisplayScales)이 표시 배율 1/scale 로 *원래 크기 복원* 한다. look/talk/wave(npc)는 미포함
 # → 전역 --scale fallback(질문 안 함).
 SCALE_PROMPT_DEFAULTS = {"idle": 1.0, "walk": 0.9, "run": 0.9, "attack": 0.8, "hit": 0.9, "death": 1.0}
+# --auto-fit-scale 재렌더 시, 권장값이 현재보다 높아도(잘림이 줄어도) 잔여 잘림이면 최소 이만큼
+# 더 낮춰 잘림 0 까지 수렴시킨다(bone 처럼 top 잘림이 커서 1회 권장으로 안 되는 자산 대응).
+AUTOFIT_STEP = 0.06
 TEXTURE_LIMIT = 8192
 SUPPORTED_EXT = (".fbx", ".glb", ".gltf")
 CHAR_EXT = SUPPORTED_EXT + (".blend",)
@@ -1266,8 +1269,9 @@ def main():
     t_all0 = time.monotonic()  # 전체 소요 측정 시작(간략 진행 표시용)
     # ── [1] Blender 렌더 → 낱장 ──
     if not args.build_only:
-        # auto-fit-scale: cell 잘림을 발견하면 권장 scale 로 재렌더(최대 3회 수렴). 미지정이면 1회 렌더.
-        _max_fit = 3 if args.auto_fit_scale else 0
+        # auto-fit-scale: cell 잘림을 발견하면 scale 을 낮춰 재렌더(최대 6회 수렴 — step 하강으로
+        # 0.6 하한까지 도달 가능). 미지정이면 1회 렌더.
+        _max_fit = 6 if args.auto_fit_scale else 0
         for _fit in range(_max_fit + 1):
             if _fit == 0:
                 print(f"\n[1] Blender 렌더 중 … (총 {total_frames}장 = {directions}방향 × {sum(frames.get(a, 8) for a in actions)}프레임)")
@@ -1330,15 +1334,19 @@ def main():
                 if args.auto_fit_scale:
                     print(f"   ⚠️ auto-fit {_max_fit}회 후에도 잔여 잘림 — 위 권장 scale 로 수동 재실행 권장")
                 break
+            # 🛑 권장값(_s = 1-max_frac-0.06)은 재렌더로 잘림이 줄면 *올라간다*. 그래서 권장만 따르면
+            # 잔여 잘림이 남아도 "권장 > 현재"라 안 낮춰 조기 정지한다(bone run/attack top 잘림 회귀).
+            # → min(권장, 현재-step) 으로 *여전히 잘리면 최소 step 만큼 더 낮춰* 잘림 0 까지 수렴시킨다.
             _changed = False
             for _a, _s in _rec.items():
                 _cur = float(action_scales.get(_a, args.scale))
-                if _s < _cur - 1e-6:
-                    action_scales[_a] = _s
-                    print(f"   ↻ auto-fit: --scale-{_a} {_cur:g}→{_s:g}")
+                _target = max(0.6, round(min(_s, _cur - AUTOFIT_STEP), 2))  # 0.6 하한
+                if _target < _cur - 1e-6:
+                    action_scales[_a] = _target
+                    print(f"   ↻ auto-fit: --scale-{_a} {_cur:g}→{_target:g}")
                     _changed = True
             if not _changed:
-                print("   ⚠️ 더 줄일 수 없음(SCALE_MIN 도달) — 잔여 잘림은 셀/카메라 조정 필요")
+                print("   ⚠️ 더 줄일 수 없음(0.6 하한 도달) — 잔여 잘림은 셀/카메라·margin 조정 필요")
                 break
 
     if args.render_only:
