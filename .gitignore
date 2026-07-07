@@ -1,0 +1,11 @@
+# Python 컴파일 캐시(py_compile/import 시 생성 — 커밋 금지, 매번 바뀜)
+__pycache__/
+*.pyc
+*.pyo
+
+# TexturePacker(libGDX gdx-tools) jar 자동 다운로드 캐시 — sheet.py 가 Maven 에서
+# 재다운로드하므로 커밋하지 않는다(~3.2MB).
+scripts/tools/
+
+# sheet.py 중간 작업 산출물(낱장 프레임 등)
+outputs/
