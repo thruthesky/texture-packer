@@ -442,8 +442,10 @@ def prompt_missing(args):
     #    128 셀 밖으로 잘리는 것을 막음) `.atlas` 헤더 `laryen.actionScale.<action>` 메타에 기록하고,
     #    게임 런타임(actor_animation_set.dart parseDisplayScales)이 표시 배율 1/scale 로 *원래 크기
     #    복원* 한다. 비대화형이면 기본 제안값을 그대로 쓴다. npc 는 idle/walk 만(전투 행동 없음).
-    scale_actions = (["idle", "walk", "run", "attack", "hit", "death"]
-                     if args.kind != "npc" else ["idle", "walk"])
+    #    🛑 --auto-fit-scale 이면 --scale-<action> 을 모두 무시(1.0 에서 자동 조정)하므로 아예 묻지 않는다.
+    scale_actions = ([] if args.auto_fit_scale else
+                     (["idle", "walk", "run", "attack", "hit", "death"]
+                      if args.kind != "npc" else ["idle", "walk"]))
     for act in scale_actions:
         if getattr(args, f"scale_{act}") is not None:
             continue  # --scale-<act> 명시 → 질문 생략(그 값 사용)
@@ -963,7 +965,8 @@ def main():
                         help=f"{a} 행동 생성 scale"
                              + (f"(미지정 시 대화형 질문·기본 제안 {_pd:g}·비대화형은 {_pd:g})"
                                 if _pd is not None else "(미지정=전역 --scale)")
-                             + ". <1=모델 작게 구워 atlas 메타 기록 → 게임 런타임 1/scale 원래 크기 복원.")
+                             + ". <1=모델 작게 구워 atlas 메타 기록 → 게임 런타임 1/scale 원래 크기 복원. "
+                             + "🛑 --auto-fit-scale 사용 시 이 값은 *무시* 되고 1.0 에서 자동 조정된다.")
     ap.add_argument("--weapon", default=None,
                     help="무기 모델(.fbx/.glb) — 캐릭터 손 본에 장착해 함께 렌더. 🛑 T-pose 캐릭터 필요.")
     ap.add_argument("--weapon-bone", default=None,
@@ -1008,8 +1011,10 @@ def main():
                          "큰 모션이 셀 밖으로 잘리면 행동별 권장 --scale-<action> 를 출력한다"
                          "(verify_cells.py, flutter 실행 불필요). false 로 끈다.")
     ap.add_argument("--auto-fit-scale", dest="auto_fit_scale", action="store_true",
-                    help="잘린 행동을 발견하면 권장 scale 로 *자동 재렌더*(최대 3회 반복해 잘림 0 으로 "
-                         "수렴). pc/npc/mob 큰 모션이 셀 안에 들어오게 사람 개입 없이 자동 조정한다.")
+                    help="잘린 행동을 발견하면 scale 을 낮춰 *자동 재렌더*(최대 6회 반복·0.6 하한, 잘림 0 "
+                         "으로 수렴). pc/npc/mob 큰 모션·칼끝이 셀 안에 들어오게 사람 개입 없이 자동 조정. "
+                         "🛑 이 옵션을 켜면 --scale-<action>·전역 --scale 은 *모두 무시* 되고 1.0(원본)에서 "
+                         "시작해 auto-fit 이 필요한 만큼만 하강한다(대화형 scale 질문도 건너뜀).")
     # ── TexturePacker 전용 ──
     ap.add_argument("--java", default="", dest="java_bin", help="java 실행 파일(기본 자동 탐지)")
     ap.add_argument("--packer-cp", default="",
@@ -1182,8 +1187,14 @@ def main():
             frames[a] = v
     action_scales = {}
     for a in actions:
-        ov = getattr(args, f"scale_{a}")
-        action_scales[a] = float(ov) if ov is not None else float(args.scale)
+        if args.auto_fit_scale:
+            # 🛑 --auto-fit-scale 은 --scale-<action>·전역 --scale 을 *모두 무시* 하고 1.0(원본 크기)
+            # 에서 시작한다 — auto-fit 이 잘림을 검사해 필요한 만큼만 자동 하강시키므로 사람이 준 시작
+            # scale 은 의미가 없다(사용자 지시 2026-07-07). 잘림이 없으면 1.0 그대로(축소 안 함).
+            action_scales[a] = 1.0
+        else:
+            ov = getattr(args, f"scale_{a}")
+            action_scales[a] = float(ov) if ov is not None else float(args.scale)
     if args.render_res:
         render_res = args.render_res
     elif args.draft:
