@@ -528,7 +528,7 @@ def write_pack_json(frames_dir, args):
         # 위치에 어긋나게 반영해 attack(검이 오르내림)에서 발이 크게 점프한다(실측: off.y=9~19).
         # 세로 trim off → offset.y=0 → cell 세로가 그대로 유지돼 발이 anchor(0.85)에 고정된다.
         # 가로(X) trim 은 유지(발 y 무관, 아틀라스 가로 폭 절약).
-        "stripWhitespaceX": not args.keep_whitespace,
+        "stripWhitespaceX": bool(args.strip_whitespace),
         "stripWhitespaceY": False,
         "rotation": bool(getattr(args, "rotation", False)),
         "pot": bool(args.pot),
@@ -876,7 +876,13 @@ def main():
     ap.add_argument("--no-rotation", dest="rotation", action="store_const", const=False,
                     help="`--rotation false` 의 별칭(하위호환) — 회전 packing 을 끈다.")
     ap.add_argument("--pot", action="store_true", help="force POT 켬(기본 끔)")
-    ap.add_argument("--keep-whitespace", action="store_true", help="strip whitespace 끔(기본 X·Y 켬)")
+    ap.add_argument("--strip-whitespace", dest="strip_whitespace", type=str2bool,
+                    nargs="?", const=True, default=True, metavar="true|false",
+                    help="가로(X) 여백 trim(기본 **true**). true 면 idle_ESE 처럼 좌우 투명 여백을 "
+                         "잘라 아틀라스 가로 폭·page 픽셀(=RAM)을 줄인다(발 y 무관). false 면 원본 셀 "
+                         "폭을 유지. 🛑 세로(Y) trim 은 발 정렬(0.85) 보존 위해 이 옵션과 무관하게 항상 off.")
+    ap.add_argument("--keep-whitespace", dest="strip_whitespace", action="store_const", const=False,
+                    help="`--strip-whitespace false` 의 별칭(하위호환) — 가로 여백 trim 을 끈다.")
     ap.add_argument("--no-fast", dest="fast", action="store_false",
                     help="정밀(느린) 패킹. 기본 fast=True(16방향 액터 필수).")
     ap.set_defaults(fast=True)
