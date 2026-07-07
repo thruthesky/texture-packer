@@ -1,0 +1,182 @@
+# texture-packer 파이프라인 — 핵심 개념·로직·소스코드 (복구 SSOT)
+
+이 문서만 보고도 packing 파이프라인 전체를 복구/재생성할 수 있어야 한다. 코드를 임의로
+바꾸지 말고 아래 규약을 그대로 따른다.
+
+## 목차
+1. [핵심 개념 — 전체 흐름](#1-핵심-개념--전체-흐름)
+2. [프로젝트 루트 탐색 (이동 후 필수)](#2-프로젝트-루트-탐색-이동-후-필수)
+3. [경로/출력 규약](#3-경로출력-규약)
+4. [libGDX TexturePacker jar 자동 다운로드](#4-libgdx-texturepacker-jar-자동-다운로드)
+5. [256색 압축 — compress_image.py 공유](#5-256색-압축--compress_imagepy-공유)
+6. [발 정렬 + 무기 잘림 3대 메커니즘](#6-발-정렬--무기-잘림-3대-메커니즘)
+7. [해상도/셀 SSOT](#7-해상도셀-ssot)
+8. [Windows 형제 파일](#8-windows-형제-파일)
+
+---
+
+## 1. 핵심 개념 — 전체 흐름
+
+`sheet.py` 가 오케스트레이션하는 단계(macOS):
+
+```
+3D 모델(.fbx/.glb/.gltf/.blend)
+  │  _sheet_render.py  (blender -b -P … -- <config.json>)
+  ▼
+방향별 frame PNG (render_res 256, 16 row)   ← align_feet 로 발 0.85 정렬
+  │  ── --texture-pack true (기본) ──▶ libGDX TexturePacker(gdx-tools jar)
+  │                                     → assets/<kind>/<name>/<name>.png + .atlas
+  │  ── --texture-pack false ──▶ _sheet_build.py (균일 grid 단일 sheet)
+  │                                     → assets/<kind>/<name>/<name>.png
+  ▼
+256색 FASTOCTREE 압축 (compress_image.py, in-place)
+  ▼
+pubspec.yaml 관리 블록에 이번 <name> 만 자동 추가
+```
+
+- `_sheet_render.py`·`_sheet_build.py`·`align_feet.py` 는 **config.json/인자 기반**이라 자체
+  ROOT 계산이 없다 → skill 로 옮겨도 수정 불필요. `sheet.py` 가 절대경로를 config 에 넣어준다.
+- `sheet.py` 는 `blender -b -P os.path.join(HERE, "_sheet_render.py")` 로 렌더 스크립트를
+  같은 폴더(HERE=skill scripts)에서 찾는다 → 함께 옮겼으므로 정상.
+
+## 2. 프로젝트 루트 탐색 (이동 후 필수)
+
+`sheet.py`·`sheet-win.py`·`combine_to_runtime_sheet.py` 는 `.claude/skills/texture-packer/scripts/`
+로 이동했으므로 과거의 `ROOT = os.path.dirname(HERE)` 는 더 이상 repo 루트가 아니다(=texture-packer).
+아래 함수로 견고하게 탐색한다(이 로직을 **삭제/단순화하면 산출 경로가 전부 깨진다**):
+
+```python
+def _find_project_root(here):
+    """① LARYEN_ROOT env(pubspec 검증) ② skill 4단계 상위 ③ git rev-parse ④ cwd"""
+    env = os.environ.get("LARYEN_ROOT")
+    if env and os.path.isfile(os.path.join(env, "pubspec.yaml")):
+        return os.path.abspath(env)
+    cand = os.path.abspath(os.path.join(here, "..", "..", "..", ".."))  # scripts→texture-packer→skills→.claude→ROOT
+    if os.path.isfile(os.path.join(cand, "pubspec.yaml")):
+        return cand
+    try:
+        top = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=here, text=True, stderr=subprocess.DEVNULL).strip()
+        if top and os.path.isfile(os.path.join(top, "pubspec.yaml")):
+            return top
+    except Exception:
+        pass
+    return os.getcwd()
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = _find_project_root(HERE)
+```
+
+- `gen_all_sheets.sh` 는 같은 원리로 `SCRIPT_DIR/../../../..` 를 `ROOT` 로 잡고 `cd "$ROOT"`,
+  sheet.py 는 `SHEET="$SCRIPT_DIR/sheet.py"` 절대경로로 호출한다.
+- **스킬 폴더를 다른 위치로 옮기면** 4단계 상위 가정이 깨진다 → 그때는 `LARYEN_ROOT` env 를
+  주거나 git repo 안에서 실행(③ fallback)한다.
+
+## 3. 경로/출력 규약
+
+```python
+KIND_MODEL_DIR = {"pc": "game-assets/characters",
+                  "mob": "game-assets/monsters",
+                  "npc": "game-assets/blend"}
+ANIM_ROOT = "game-assets/animations"   # <variant>/{action}.fbx
+
+# 모델 탐색:  os.path.join(ROOT, KIND_MODEL_DIR[kind], <character>)
+# 출력 폴더:  os.path.join(ROOT, "assets", kind, name)   → <name>.png / <name>.atlas
+# grid 정보:  os.path.join(ROOT, "game-assets", "sprites")  (--texture-pack false)
+# 작업 폴더:  os.path.join(ROOT, "outputs", name)          (--outputs 미지정 시)
+# pubspec:    os.path.join(ROOT, "pubspec.yaml")
+```
+
+- pubspec 관리 블록: `# >>> AUTO(sheet.py packed actors) >>>` … 이번 `<name>` 의
+  `assets/<kind>/<name>/<name>.png[, .atlas]` 만 추가(전체 폴더 등록 금지).
+- 🛑 게임 pc/mob 로드는 *오직* `assets/<pc|mob>/<name>/<name>.atlas`. 격자
+  `assets/render/actors/` 는 폐기(2026-07-01). atlas 없으면 투명 placeholder + 재생성 목록 로그.
+
+## 4. libGDX TexturePacker jar 자동 다운로드
+
+```python
+GDX_VERSION = "1.13.1"   # GDX_MAVEN = Maven central
+GDX_JARS = {
+    "gdx-1.13.1.jar":                          ".../gdx/1.13.1/gdx-1.13.1.jar",
+    "gdx-tools-1.13.1.jar":                    ".../gdx-tools/1.13.1/gdx-tools-1.13.1.jar",
+    "gdx-platform-1.13.1-natives-desktop.jar": ".../gdx-platform/1.13.1/…-natives-desktop.jar",
+}
+# tools_dir = os.path.join(HERE, "tools")   ← skill scripts/tools/ (gitignore, 다운로드 캐시)
+#   jar 없으면 Maven 에서 _download 후 캐시. --packer-cp 로 수동 지정 가능.
+```
+
+- `scripts/tools/*.jar` 는 gitignore(자동 다운로드 캐시)라 git 추적 안 됨. skill 이동 시
+  일반 `mv` 로 옮긴다(`git mv` 는 미추적이라 실패). 없으면 첫 실행에 자동 재다운로드.
+- packing 은 `java -cp <jars> com.badlogic.gdx.tools.texturepacker.TexturePacker …` 로 실행.
+  **Java 필요**(`--java` 로 경로 지정 가능). trim(투명 여백 제거) + 필요 시 90도 rotate packing.
+
+## 5. 256색 압축 — compress_image.py 공유
+
+`compress_image.py` 는 **이 스킬 소유가 아니다**. 범용 PNG 압축 도구라 프로젝트
+`scripts/compress_image.py` 에 있고 `compress-image` 스킬이 공유한다. sheet.py 는 이렇게 참조:
+
+```python
+def compress_pages(pages, colors=256):
+    """packed atlas 페이지 PNG(들)를 compress_image.py 의 q256 으로 in-place 압축.
+       🛑 in-place 라야 .atlas 의 페이지 참조(basename)가 유지된다."""
+    try:
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))   # ← HERE 아님! 프로젝트 scripts/
+        import compress_image as _ci
+        from PIL import Image
+        direct = (_ci, Image)
+    except (Exception, SystemExit):   # numpy/pillow 부재 시 SystemExit → uv 격리 폴백
+        direct = None
+    for p in pages:
+        if direct is not None:
+            _ci, Image = direct
+            _ci.compress_q256(Image.open(p), p, colors=colors)   # in-place
+        else:
+            build = os.path.join(ROOT, "scripts", "compress_image.py")   # ← 프로젝트 scripts/
+            # uv run --with numpy --with pillow python3 <build> <p> --inplace --colors <n>
+```
+
+- 🛑 `sys.path.insert(0, HERE)` 로 되돌리지 말 것 — HERE 는 skill scripts 라 거기엔
+  compress_image.py 가 없다. 반드시 `os.path.join(ROOT, "scripts")`.
+- RAM 은 W×H×4 로 고정. 압축은 **디스크/번들 용량만** 줄인다(OOM 무관 — game-memory.md SSOT).
+
+## 6. 발 정렬 + 무기 잘림 3대 메커니즘
+
+무기(검·도끼)가 run/attack 에서 cell(128) 밖으로 잘리는 문제는 **cell 128 유지한 채**
+아래 3가지를 *한 세트*로 적용해 해결한다(하나라도 빠지면 "검 잘림" 또는 "행동 전환 점프"):
+
+1. **행동별 생성 scale** — `--scale-attack 0.8 --scale-run 0.9` 로 그 행동만 모델을 작게
+   그려(`ortho=base/scale`) 무기가 셀 안에 들어오게 한다.
+2. **발 y 정렬(자동)** — `align_feet.py` / `_sheet_build.py` 가 모든 프레임의 발(불투명 bbox
+   하단)을 셀 0.85 에 고정 정렬 → 행동 전환 상하 "점프" 원천 차단. 목표 y(0.85)는 scale·무기
+   크기와 무관한 고정 상수.
+3. **런타임 화면 보정** — `kActorDisplayKByKind`(actor_animation_set.dart, 사람 편집 const)에
+   `1/scale`(0.8→1.25) 입력 → 작게 구운 만큼 화면에서 키워 몸 크기 유지. sheet.py 가 생성 후
+   권장값을 출력한다(python→dart 자동 생성 금지).
+
+> 상세 SSOT·FAQ 는 `.claude/skills/asset/references/ssot.md §1.5`.
+
+## 7. 해상도/셀 SSOT
+
+```python
+DEFAULT_RENDER_RES = 256   # frame 렌더 해상도
+DEFAULT_CELL_SIZE  = 128   # atlas orig/cell (2026-07-05 pc/npc/mob 전부 128 통일)
+# --scale-frames 자동 = CELL/RENDER = 128/256 = 0.5
+DEFAULT_FRAMES  = {"idle":8, "walk":12, "attack":16, "hit":8, "death":8, "run":12, "look":?, "talk":?, "wave":?}
+DEFAULT_ACTIONS = ["idle","walk","attack","hit","death","run"]   # pc/mob col 순서
+NPC_ACTIONS     = ["idle","look","talk","walk","wave"]           # npc col 순서
+```
+
+- 과거 pc/npc 160·mob 128 로 갈렸으나 display 가 어차피 128 이라 pc/npc 160 의 여유 픽셀은
+  화질 이득 없이 iOS OOM(actorAtlas RAM)만 키웠다 → 128 통일(texture=display 1:1).
+- 출시 4플랫폼(Android/iOS/Windows/macOS) native 8192 단축이라 7680×2048 단일 통짜 sheet OK
+  (Web 미출시 → 4096 제한 무관).
+
+## 8. Windows 형제 파일
+
+`sheet-win.py`·`sheet-preview-win.py` 는 macOS `sheet.py` 의 Windows 판으로, 같은 보조
+스크립트(`_sheet_render.py`·`_sheet_build.py`·`align_feet.py`)를 `os.path.join(HERE, …)` 로
+공유한다 → 함께 이 스킬 scripts/ 에 있어야 정상. `_find_project_root` 로직·compress_image
+경로(`ROOT/scripts`)를 sheet.py 와 동일하게 유지한다. `sheet-preview-win.py` 는 4방향 preview
+허용 패치를 production `_sheet_render.py`/`_sheet_build.py` 에서 복사 생성하며, 출력은
+`outputs/<name>_preview/`(production assets/ 오염 없음).
