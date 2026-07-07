@@ -1,6 +1,6 @@
 ---
 name: texture-packer
-description: 라리엔 PC/몬스터(mob)/NPC 의 3D 모델(FBX/GLB/glTF/.blend)을 16방향(기본) sprite frame 으로 Blender 렌더한 뒤 libGDX TexturePacker 로 빈틈 없는 packed atlas(assets/<kind>/<name>/<name>.png + .atlas)로 묶는 texture-packing 파이프라인. 다음 경우 사용 — (1) "pc/mob/npc 를 texture packing 해줘", "sprite sheet 를 atlas 로 패킹", "packed atlas 생성", (2) 캐릭터/몬스터 sprite 를 게임에 넣을 atlas 로 굽기(sheet.py 실행), (3) 기존 kind 를 같은 이름으로 재생성·교체, (4) 행동별 프레임 수(idle/walk/attack/hit/death/run 또는 npc look/talk/wave) 조정 packing, (5) grid 단일 통합 sheet(--texture-pack false) 생성, (6) gdx-tools jar·TexturePacker·발 정렬(align_feet)·256색 압축(compress_image)·pubspec 자동 갱신 등 packing 파이프라인 이해/디버깅. 라리엔의 sheet.py·_sheet_render.py·_sheet_build.py·align_feet.py·sheet-win.py 등 packing 코드 전체를 소유한다. 키워드 — texture packing, texture-packer, packed atlas, sprite sheet packing, gdx TexturePacker, sheet.py, pc packing, mob packing, npc packing, 16방향 아틀라스, .atlas, flame_texturepacker, 발 정렬, align_feet, 통짜 grid sheet.
+description: 라리엔 PC/몬스터(mob)/NPC 의 3D 모델(FBX/GLB/glTF/.blend)을 16방향(기본) sprite frame 으로 Blender 렌더한 뒤 libGDX TexturePacker 로 빈틈 없는 packed atlas(assets/<kind>/<name>/<name>.png + .atlas)로 묶는 texture-packing 파이프라인. 다음 경우 사용 — (1) "pc/mob/npc 를 texture packing 해줘", "sprite sheet 를 atlas 로 패킹", "packed atlas 생성", (2) 캐릭터/몬스터 sprite 를 게임에 넣을 atlas 로 굽기(sheet.py 실행), (3) 기존 kind 를 같은 이름으로 재생성·교체, (4) 행동별 프레임 수(idle/walk/attack/hit/death/run 또는 npc look/talk/wave) 조정 packing, (5) grid 단일 통합 sheet(--texture-pack false) 생성, (6) gdx-tools jar·TexturePacker·발 정렬(align_feet)·256색 압축(compress_image)·pubspec 자동 갱신 등 packing 파이프라인 이해/디버깅, (7) Flutter/Flame 이 packed atlas(.atlas/.png)를 로드·파싱해 게임 월드에 sprite 로 표시하는 *런타임* 흐름(TexturePackerAtlas.load·findSpritesByName·SpriteAnimation·getDir16·displayScaleFor·isometric worldToScreen 투영·anchor/size·AssetManifest 감지·누락 placeholder) 이해/디버깅. 라리엔의 sheet.py·_sheet_render.py·_sheet_build.py·align_feet.py·sheet-win.py packing 코드 + actor_animation_set.dart·mob_component.dart·iso_projection.dart 런타임 로드/렌더 경로를 모두 다룬다. 키워드 — texture packing, texture-packer, packed atlas, sprite sheet packing, gdx TexturePacker, sheet.py, pc/mob/npc packing, 16방향 아틀라스, .atlas, flame_texturepacker, TexturePackerAtlas, SpriteAnimationComponent, getDir16, worldToScreen, region 이름 walk_E, 발 정렬 align_feet, 통짜 grid sheet, atlas 파싱, sprite 렌더.
 metadata:
   author: laryen
   version: "1.0"
@@ -102,6 +102,38 @@ assets/<kind>/<name>/<name>.atlas    # flame_texturepacker 가 읽는 trim/rotat
 | `--directions {8\|16}` | 16 | 신규는 16 고정. 8 은 legacy 재생성 전용 |
 | `--render-only / --build-only` | — | 렌더만 / packing만 |
 | `--packer-cp PATH` | — | gdx jar classpath 수동 지정(기본은 `scripts/tools/` 자동) |
+
+## 런타임: Flutter/Flame 이 `.atlas`/`.png` 를 파싱해 게임 월드에 표시
+
+packing 결과물이 게임에서 로드·렌더되는 소비 측 흐름(전체 소스·복구 SSOT 는
+[references/flame-runtime.md](references/flame-runtime.md)):
+
+```
+assets/<cat>/<name>/<name>.{atlas,png}  (cat=pc|mob)
+  ① AssetManifest 스캔 → name→cat (hasActorAtlas)            ← 앱 재빌드 필요(번들 시 고정)
+  ② TexturePackerAtlas.load(path, useOriginalSize:true)      ← flame_texturepacker 가 trim/rotate 복원
+  ③ atlas.findSpritesByName('walk_E') → SpriteAnimation.spriteList(frames, stepTime, loop)
+       → _table[state][dir16]  (6 state × 16 dir)
+  ④ MobComponent/PlayerComponent(=SpriteAnimationComponent):
+       animation = animSet.getDir16(state, facing16)
+       size = kActorDisplaySize × displayScaleFor(state)      ← laryen.actionScale 메타 배율 복원
+       anchor = (0.5, 0.85);  position = worldToScreen(서버 world cm)   ← isometric 투영
+```
+
+핵심 규약(디버깅 시 이 값이 어긋나면 sprite 안 보임/깨짐):
+- **region 이름** = `<action>_<DIR16>`(예 `walk_E`·`attack_SSW`) — packing 의 row/action 순서와
+  런타임 `_atlasActions`·`kDir16Labels`(FLARE16)가 **동일 SSOT** 여야 정합.
+- **atlas 추가/교체 후 앱 재빌드 필수** — `AssetManifest` 는 빌드 시 번들되어 hot reload/restart
+  로 새 atlas 가 안 잡힌다.
+- **pc/mob 는 오직 atlas 에서만 로드**(격자 폐기). 없으면 투명 placeholder + `missingAtlasKinds`
+  리포트 → `sheet.py` 로 재생성.
+- 화면 크기 = `kActorDisplaySize`(128), 발 정렬 `anchor (0.5,0.85)`, 행동 배율은 `.atlas` 의
+  `laryen.actionScale.<action>` 메타에서 자동 복원(1/생성scale).
+
+관련 코드: [actor_animation_set.dart](../../../lib/features/game/render/actor_animation_set.dart)
+(`loadActorAtlas`·`_buildAtlasTable`·`getDir16`·`parseDisplayScales`) ·
+[mob_component.dart](../../../lib/features/game/render/mob_component.dart) ·
+[iso_projection.dart](../../../lib/features/game/render/iso_projection.dart).
 
 ## 절대 규칙
 
