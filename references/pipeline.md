@@ -249,3 +249,4 @@ for _fit in range(1 + (3 if args.auto_fit_scale else 0)):
 | **npc kind**(mannequin, 8dir, look/talk/wave) | scale 1.3 → npc 전용 행동 5종(idle/look/talk/walk/wave) clip(bottom 위주) → auto-fit(look 0.83·talk 0.86·wave 0.8…) → 재렌더 잘림 0. scale 1.0 자연 상태는 잘림 0 — **mob 과 다른 행동 세트에서도 검사·auto-fit 정확**(pc/npc/mob 커버) |
 | **pc kind**(ambusher --kind pc) | scale 1.3 → 6종 clip → auto-fit(attack 0.68·death 0.6·walk 0.84…) → 재렌더 잘림 0. mob 과 동일 행동·경로에서 pc 로도 수렴 실증 |
 | **--build-only 검사** | 잘림 있는 기존 프레임(attack scale 1.3) 재packing → `[검사]` 가 attack 26%·death 1% clip 감지 + 권장 scale + 🛑 재렌더 권장 출력 후 packing 계속(auto-fit 은 렌더 경로만) |
+| **16방향(production) + 프레임 1** | 🐛 버그 발견·수정: `--idle 1` 등 프레임 1 → `sample_frames` 의 `(n-1)` 나눗셈 ZeroDivisionError 로 렌더 크래시 → `n<=1` 가드 추가([_sheet_render.py](../scripts/_sheet_render.py) `sample_frames`). 수정 후 16방향 렌더 성공(112장) → attack 26% clip → auto-fit 0.68 → 재렌더 잘림 0 |

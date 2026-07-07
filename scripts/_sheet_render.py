@@ -730,8 +730,10 @@ _setup_color_boost(COLOR_LEVEL)
 
 def sample_frames(a, n, is_loop):
     s = int(a.frame_range[0]); e = int(a.frame_range[1])
-    if e <= s:
-        return [s] * n
+    # 🛑 n<=1(행동당 1프레임) 은 non-loop 의 (n-1) 나눗셈에서 ZeroDivisionError 를 낸다 →
+    # 프레임 하나면 시작 프레임만 반환(정지 애니 e<=s 와 동일 처리). --idle 1 등 단일 프레임 지원.
+    if e <= s or n <= 1:
+        return [s] * max(1, n)
     if is_loop:                                       # loop: end 미포함(첫=끝 중복 방지)
         return [s + round((e - s) * i / n) for i in range(n)]
     return [s + round((e - s) * i / (n - 1)) for i in range(n)]
