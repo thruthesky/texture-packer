@@ -1329,8 +1329,9 @@ def main():
                   + (f" · {actual_frames / _r_dt:.1f}장/s" if _r_dt > 0 else ""))
             # 🛑 검사·packing 입력이 될 *최종 프레임* 을 여기서 확정한다 — align_feet 의 세로 이동으로
             # 칼끝/무기 끝이 새로 잘릴 수 있으므로(팀 지적1·자체 결함1: 과거엔 검사가 정렬 *전*), verify_cells
-            # 가 *정렬 후* 프레임을 봐야 최종 atlas 의 실제 잘림을 잡는다. 정렬은 idempotent(발 0.85면 무변화)라
-            # 매 재렌더마다 안전. verify 여부와 무관하게 항상 정렬(정렬본이 최종 packing 입력).
+            # 가 *정렬 후* 프레임을 봐야 최종 atlas 의 실제 잘림을 잡는다. 🛑 align 은 idempotent 가 *아니라*
+            # 원본 _foot 마스크 기준으로 매번 shift 하므로(이중 정렬 시 하단 잘림, 실측 확인) *정렬 안 된 새
+            # 프레임에만 1회* 적용한다 — auto-fit 재렌더는 매번 새로 굽는 프레임이라 안전(같은 프레임 재정렬 아님).
             align_frames_feet(frames_dir)
             # ── cell 잘림 검사(--verify-cells) + auto-fit 재렌더 판단 ──
             if not args.verify_cells:
@@ -1367,11 +1368,11 @@ def main():
         print("\n(--render-only) 낱장:", frames_dir, "\n완료.")
         return
 
-    # --build-only(렌더 건너뛰고 기존 낱장 재packing): 검사·packing 입력을 정렬 후 최종 프레임으로
-    # 통일(결함1 — 이전 렌더가 정렬 안 했을 수 있으므로 여기서도 정렬). auto-fit 은 못 하지만 기존
-    # 프레임의 cell 잘림은 검사해 알린다(잘리면 --auto-fit-scale 없이 재렌더 필요 — 권장 scale 로 재실행).
+    # --build-only(렌더 건너뛰고 기존 낱장 재packing): 기존 낱장은 이전 렌더([1] 루프)에서 이미
+    # 발 정렬됐다. 🛑 align_frames_feet 는 idempotent 가 *아니므로*(원본 _foot 마스크 기준으로 매번
+    # shift → 이미 정렬된 프레임에 재실행하면 이중 정렬로 하단 잘림 발생, 실측 확인) 여기서 재정렬하지
+    # 않고 검사만 한다. auto-fit 은 못 하지만 잘림은 알린다(권장 scale 로 --build-only 없이 재렌더).
     if args.build_only:
-        align_frames_feet(frames_dir)
         if args.verify_cells:
             print("\n[검사] 기존 낱장 프레임 cell 잘림 검사(--build-only — auto-fit 불가, 리포트만):")
             _bo_rec = verify_cells_and_report(frames_dir)
