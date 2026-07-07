@@ -450,9 +450,20 @@ def prompt_missing(args):
             warn = ("  🛑 캐릭터/몬스터/NPC(pc/mob/npc)는 발 어긋남·패킹 지연으로 n(off) 권장"
                     if args.kind in ("pc", "mob", "npc") else "")
             args.rotation = str2bool(_ask(
-                f"회전 packing(공간 절약) 켤까요?{warn} [Y/n]", "Y"))
+                f"회전 packing(공간 절약) 켤까요?{warn} [y/N]", "N"))
         else:
-            args.rotation = True  # 비대화형 기본 true (사용자 지시)
+            args.rotation = False  # 비대화형 기본 false (사용자 지시 2026-07-07)
+    # 9) 가로(X) 여백 trim — 기본 true. 미지정(--strip-whitespace/--keep-whitespace 둘 다 안 줌)이면
+    #    대화형으로 물어보고(기본 Y=true·비대화형은 true), 명시했으면 그 값을 그대로 쓴다.
+    #    가로 trim 은 발 y 와 무관해 위험이 없고 page 폭(=RAM)을 줄이므로 기본 켜기를 권한다.
+    #    (세로 Y trim 은 발 정렬 보존 위해 이 옵션과 무관하게 항상 off.)
+    if args.strip_whitespace is None:
+        if interactive:
+            args.strip_whitespace = str2bool(_ask(
+                "가로(X) 여백 trim 켤까요? 좌우 투명 여백을 잘라 아틀라스 폭·RAM 을 줄인다"
+                "(발 y 무관·안전) [Y/n]", "Y"))
+        else:
+            args.strip_whitespace = True  # 비대화형 기본 true (사용자 지시 2026-07-07)
     return args
 
 
@@ -865,8 +876,8 @@ def main():
                          "명시값은 실험용이며, cell 과 orig 가 어긋나면 화면 비례 검증이 필요하다.")
     ap.add_argument("--rotation", type=str2bool, nargs="?", const=True, default=None,
                     metavar="true|false",
-                    help="회전 packing(공간 절약). **기본 true**. 미지정 시 대화형으로 물어보고"
-                         "(비대화형이면 true), `--rotation true|false` 로 명시하면 질문을 건너뛴다. "
+                    help="회전 packing(공간 절약). **기본 false**. 미지정 시 대화형으로 물어보고"
+                         "(기본 제안 n·비대화형이면 false), `--rotation true|false` 로 명시하면 질문을 건너뛴다. "
                          "값 없이 `--rotation` 만 줘도 true(하위호환). 🛑 actor(pc/mob/npc)는 "
                          "`--rotation false` 권장 — flame_texturepacker 의 rotate + useOriginalSize "
                          "offset 렌더가 발 위치를 어긋나게 해(회전 프레임만 offset 스왑·부호변경) attack "
@@ -877,10 +888,12 @@ def main():
                     help="`--rotation false` 의 별칭(하위호환) — 회전 packing 을 끈다.")
     ap.add_argument("--pot", action="store_true", help="force POT 켬(기본 끔)")
     ap.add_argument("--strip-whitespace", dest="strip_whitespace", type=str2bool,
-                    nargs="?", const=True, default=True, metavar="true|false",
-                    help="가로(X) 여백 trim(기본 **true**). true 면 idle_ESE 처럼 좌우 투명 여백을 "
-                         "잘라 아틀라스 가로 폭·page 픽셀(=RAM)을 줄인다(발 y 무관). false 면 원본 셀 "
-                         "폭을 유지. 🛑 세로(Y) trim 은 발 정렬(0.85) 보존 위해 이 옵션과 무관하게 항상 off.")
+                    nargs="?", const=True, default=None, metavar="true|false",
+                    help="가로(X) 여백 trim. **기본 true**. 미지정 시 대화형으로 물어보고(기본 제안 "
+                         "Y·비대화형이면 true), `--strip-whitespace true|false` 로 명시하면 질문을 "
+                         "건너뛴다. true 면 idle_ESE 처럼 좌우 투명 여백을 잘라 아틀라스 가로 폭·page "
+                         "픽셀(=RAM)을 줄인다(발 y 무관·안전). false 면 원본 셀 폭을 유지. 🛑 세로(Y) "
+                         "trim 은 발 정렬(0.85) 보존 위해 이 옵션과 무관하게 항상 off.")
     ap.add_argument("--keep-whitespace", dest="strip_whitespace", action="store_const", const=False,
                     help="`--strip-whitespace false` 의 별칭(하위호환) — 가로 여백 trim 을 끈다.")
     ap.add_argument("--no-fast", dest="fast", action="store_false",
