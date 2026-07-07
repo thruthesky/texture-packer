@@ -440,6 +440,19 @@ def prompt_missing(args):
             and args.run is None and interactive:
         args._mob_include_run = str2bool(_ask(
             "run(달리기) 애니 포함? 대부분 몬스터는 걷기만 하므로 기본 제외(디스크↓) [y/N]", "N"))
+    # 8) 회전 packing — 기본 true. 미지정(--rotation/--no-rotation 둘 다 안 줌)이면 대화형으로
+    #    물어보고(비대화형은 true), 명시했으면 그 값을 그대로 쓴다(질문 생략 — run-animation 과 동형).
+    #    🛑 actor(pc/mob/npc)는 rotate+useOriginalSize offset 이 발 위치를 어긋나게 하고(attack 발 뜸)
+    #    16방향(~1024프레임)은 패킹이 20분+ 걸리므로 off(false) 권장 — 질문에 경고를 명시해 개발자가
+    #    인지하고 고르게 한다. 사용자 지시(2026-07-07): 기본 true + 미설정 시 물어봐서 설정.
+    if args.rotation is None:
+        if interactive:
+            warn = ("  🛑 캐릭터/몬스터/NPC(pc/mob/npc)는 발 어긋남·패킹 지연으로 n(off) 권장"
+                    if args.kind in ("pc", "mob", "npc") else "")
+            args.rotation = str2bool(_ask(
+                f"회전 packing(공간 절약) 켤까요?{warn} [Y/n]", "Y"))
+        else:
+            args.rotation = True  # 비대화형 기본 true (사용자 지시)
     return args
 
 
@@ -850,13 +863,18 @@ def main():
                     help="패킹 전 낱장 리사이즈 배율. 미지정 시 아틀라스 orig=cell 이 되도록 자동 "
                          f"(cell/render_res, 기본 {DEFAULT_CELL_SIZE}/{DEFAULT_RENDER_RES}=0.625 → orig {DEFAULT_CELL_SIZE}). "
                          "명시값은 실험용이며, cell 과 orig 가 어긋나면 화면 비례 검증이 필요하다.")
-    ap.add_argument("--rotation", action="store_true",
-                    help="회전 packing 켬(기본 off). 🛑 actor 는 off 필수 — flame_texturepacker 의 "
-                         "rotate + useOriginalSize offset 렌더가 발 위치를 어긋나게 해(회전 프레임만 "
-                         "별도 경로로 offset 을 스왑·부호변경) attack 등에서 발이 뜬다. off 면 모든 "
-                         "프레임이 단순 offset 경로라 발 정렬(0.85)이 화면에 정확히 반영된다.")
-    ap.add_argument("--no-rotation", action="store_true",
-                    help="(deprecated·no-op) rotation 은 기본 off 다. 하위호환용으로만 남김.")
+    ap.add_argument("--rotation", type=str2bool, nargs="?", const=True, default=None,
+                    metavar="true|false",
+                    help="회전 packing(공간 절약). **기본 true**. 미지정 시 대화형으로 물어보고"
+                         "(비대화형이면 true), `--rotation true|false` 로 명시하면 질문을 건너뛴다. "
+                         "값 없이 `--rotation` 만 줘도 true(하위호환). 🛑 actor(pc/mob/npc)는 "
+                         "`--rotation false` 권장 — flame_texturepacker 의 rotate + useOriginalSize "
+                         "offset 렌더가 발 위치를 어긋나게 해(회전 프레임만 offset 스왑·부호변경) attack "
+                         "등에서 발이 뜨고, 16방향(~1024프레임)은 패킹이 20분+ 걸린다. false 면 모든 "
+                         "프레임이 단순 offset 경로라 발 정렬(0.85)이 화면에 정확히 반영된다. 정적 "
+                         "타일/decor 등 발 정렬이 무관하고 프레임이 적은 자산은 true 로 공간을 절약한다.")
+    ap.add_argument("--no-rotation", dest="rotation", action="store_const", const=False,
+                    help="`--rotation false` 의 별칭(하위호환) — 회전 packing 을 끈다.")
     ap.add_argument("--pot", action="store_true", help="force POT 켬(기본 끔)")
     ap.add_argument("--keep-whitespace", action="store_true", help="strip whitespace 끔(기본 X·Y 켬)")
     ap.add_argument("--no-fast", dest="fast", action="store_false",
