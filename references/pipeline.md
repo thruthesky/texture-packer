@@ -246,3 +246,4 @@ for _fit in range(1 + (3 if args.auto_fit_scale else 0)):
 | false positive | 전 행동 scale 0.7(작게) → **잘림 0**(작게 구운 건 정상 판정) |
 | 육안 교차 | ai_paladin `attack_W_04` 방패·검 상단 clip = top 검출과 일치 |
 | **전체 packing 통합**(scale 1.3 + Y trim) | 6종 clip → auto-fit 재렌더 잘림 0 → atlas 생성. `laryen.actionScale` 메타에 auto-fit scale(attack 0.6·idle 0.68·walk 0.84…) 기록(런타임 1/scale 원래 크기 복원) + Y trim `offset y≠0`(fix_offset_y 보정) — **auto-fit·메타·발 보정이 한 atlas 에 정합** |
+| **npc kind**(mannequin, 8dir, look/talk/wave) | scale 1.3 → npc 전용 행동 5종(idle/look/talk/walk/wave) clip(bottom 위주) → auto-fit(look 0.83·talk 0.86·wave 0.8…) → 재렌더 잘림 0. scale 1.0 자연 상태는 잘림 0 — **mob 과 다른 행동 세트에서도 검사·auto-fit 정확**(pc/npc/mob 커버) |
