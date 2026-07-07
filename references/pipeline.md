@@ -245,3 +245,4 @@ for _fit in range(1 + (3 if args.auto_fit_scale else 0)):
 | brute.blend scale 1.0 | death 4/16 clip(7%) → 0.87 (다른 자산도 정확) |
 | false positive | 전 행동 scale 0.7(작게) → **잘림 0**(작게 구운 건 정상 판정) |
 | 육안 교차 | ai_paladin `attack_W_04` 방패·검 상단 clip = top 검출과 일치 |
+| **전체 packing 통합**(scale 1.3 + Y trim) | 6종 clip → auto-fit 재렌더 잘림 0 → atlas 생성. `laryen.actionScale` 메타에 auto-fit scale(attack 0.6·idle 0.68·walk 0.84…) 기록(런타임 1/scale 원래 크기 복원) + Y trim `offset y≠0`(fix_offset_y 보정) — **auto-fit·메타·발 보정이 한 atlas 에 정합** |
