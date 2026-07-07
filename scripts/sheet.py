@@ -1012,9 +1012,10 @@ def main():
                          "(verify_cells.py, flutter 실행 불필요). false 로 끈다.")
     # ── 원클릭 최적 프리셋 ──
     ap.add_argument("--auto", action="store_true",
-                    help="🚀 원클릭 최적 프리셋 — `--auto-fit-scale --color-compression true --vivid 5 "
-                         "--rotation true --strip-x-whitespaces true --strip-y-whitespaces true "
-                         "--shading eevee` 를 한 번에 켠다(shading 의 'true'=eevee). 대화형 질문 없이 "
+                    help="🚀 원클릭 최적 프리셋 — `--texture-pack true --auto-fit-scale "
+                         "--color-compression true --vivid 5 --rotation true --strip-x-whitespaces true "
+                         "--strip-y-whitespaces true --shading eevee` 를 한 번에 켠다(shading 의 "
+                         "'true'=eevee). 대화형 질문 없이 "
                          "pc/mob/npc 를 잘림 없이 자동 조정 + 최대 압축으로 패킹한다. 🛑 개별 옵션을 함께 "
                          "명시하면 *그 값이 우선*(auto 는 미지정 항목만 채운다) — 예 `--auto --rotation "
                          "false` 는 회전만 끄고 나머지 프리셋은 유지. auto-fit 이 켜지므로 --scale-<action>·"
@@ -1076,18 +1077,22 @@ def main():
     args._color_compression_explicit = cc_explicit
 
     # ── --auto: 원클릭 최적 프리셋 ──
-    # prompt_missing 전에 적용해야 rotation/strip 이 None 이 아니게 되어 대화형 질문을 건너뛴다.
-    # 개별 옵션을 명시하면 그 값이 우선 — auto 는 *미지정(None)* 항목만 채운다(override 존중).
+    # prompt_missing 전에 적용해야 texture-pack/color-compression/rotation/strip 의 대화형
+    # 질문을 *모두* 건너뛴다. 개별 옵션을 명시하면 그 값이 우선 — auto 는 *미지정* 항목만 채운다.
     if args.auto:
         args.auto_fit_scale = True  # 프리셋 핵심(store_true — 잘림 자동 조정)
+        if not tp_explicit:
+            args.texture_pack = True
+            args._texture_pack_explicit = True  # texture-pack 대화형 질문 억제
+        if not cc_explicit:
+            args.color_compression = True
+            args._color_compression_explicit = True  # color-compression 대화형 질문 억제
         if args.rotation is None:
             args.rotation = True
         if args.strip_x_whitespaces is None:
             args.strip_x_whitespaces = True
         if args.strip_y_whitespaces is None:
             args.strip_y_whitespaces = True
-        if not cc_explicit:
-            args.color_compression = True
         if not any(a == "--vivid" or a.startswith("--vivid=") for a in argv):
             args.vivid = 5
         if not any(a == "--shading" or a.startswith("--shading=") for a in argv):
