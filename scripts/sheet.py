@@ -482,9 +482,9 @@ def prompt_missing(args):
             warn = ("  🛑 캐릭터/몬스터/NPC(pc/mob/npc)는 발 어긋남·패킹 지연으로 n(off) 권장"
                     if args.kind in ("pc", "mob", "npc") else "")
             args.rotation = str2bool(_ask(
-                f"회전 packing(공간 절약) 켤까요?{warn} [y/N]", "N"))
+                f"회전 packing(공간 절약) 켤까요?{warn} [Y/n]", "Y"))
         else:
-            args.rotation = False  # 비대화형 기본 false (사용자 지시 2026-07-07)
+            args.rotation = True  # 비대화형 기본 true (사용자 지시 2026-07-07 재변경)
     # 9) 가로(X)/세로(Y) 여백 trim — 둘 다 기본 true. 미지정이면 대화형으로 물어봄(기본 Y).
     #    하위호환: --strip-whitespace/--keep-whitespace 는 x·y 를 동시 설정(개별 미지정 시).
     _both = getattr(args, "_strip_both", None)
@@ -1010,6 +1010,15 @@ def main():
                     help="렌더 후 낱장 프레임의 cell 잘림(clip)을 자동 검사(기본 true). run/attack 등 "
                          "큰 모션이 셀 밖으로 잘리면 행동별 권장 --scale-<action> 를 출력한다"
                          "(verify_cells.py, flutter 실행 불필요). false 로 끈다.")
+    # ── 원클릭 최적 프리셋 ──
+    ap.add_argument("--auto", action="store_true",
+                    help="🚀 원클릭 최적 프리셋 — `--auto-fit-scale --color-compression true --vivid 5 "
+                         "--rotation true --strip-x-whitespaces true --strip-y-whitespaces true "
+                         "--shading eevee` 를 한 번에 켠다(shading 의 'true'=eevee). 대화형 질문 없이 "
+                         "pc/mob/npc 를 잘림 없이 자동 조정 + 최대 압축으로 패킹한다. 🛑 개별 옵션을 함께 "
+                         "명시하면 *그 값이 우선*(auto 는 미지정 항목만 채운다) — 예 `--auto --rotation "
+                         "false` 는 회전만 끄고 나머지 프리셋은 유지. auto-fit 이 켜지므로 --scale-<action>·"
+                         "전역 --scale 은 무시되고 1.0 에서 자동 하강한다.")
     ap.add_argument("--auto-fit-scale", dest="auto_fit_scale", action="store_true",
                     help="잘린 행동을 발견하면 scale 을 낮춰 *자동 재렌더*(최대 6회 반복·0.6 하한, 잘림 0 "
                          "으로 수렴). pc/npc/mob 큰 모션·칼끝이 셀 안에 들어오게 사람 개입 없이 자동 조정. "
@@ -1027,8 +1036,8 @@ def main():
                          "명시값은 실험용이며, cell 과 orig 가 어긋나면 화면 비례 검증이 필요하다.")
     ap.add_argument("--rotation", type=str2bool, nargs="?", const=True, default=None,
                     metavar="true|false",
-                    help="회전 packing(공간 절약). **기본 false**. 미지정 시 대화형으로 물어보고"
-                         "(기본 제안 n·비대화형이면 false), `--rotation true|false` 로 명시하면 질문을 건너뛴다. "
+                    help="회전 packing(공간 절약). **기본 true**. 미지정 시 대화형으로 물어보고"
+                         "(기본 제안 Y·비대화형이면 true), `--rotation true|false` 로 명시하면 질문을 건너뛴다. "
                          "값 없이 `--rotation` 만 줘도 true(하위호환). 🛑 actor(pc/mob/npc)는 "
                          "`--rotation false` 권장 — flame_texturepacker 의 rotate + useOriginalSize "
                          "offset 렌더가 발 위치를 어긋나게 해(회전 프레임만 offset 스왑·부호변경) attack "
@@ -1065,6 +1074,24 @@ def main():
     args = ap.parse_args()
     args._texture_pack_explicit = tp_explicit
     args._color_compression_explicit = cc_explicit
+
+    # ── --auto: 원클릭 최적 프리셋 ──
+    # prompt_missing 전에 적용해야 rotation/strip 이 None 이 아니게 되어 대화형 질문을 건너뛴다.
+    # 개별 옵션을 명시하면 그 값이 우선 — auto 는 *미지정(None)* 항목만 채운다(override 존중).
+    if args.auto:
+        args.auto_fit_scale = True  # 프리셋 핵심(store_true — 잘림 자동 조정)
+        if args.rotation is None:
+            args.rotation = True
+        if args.strip_x_whitespaces is None:
+            args.strip_x_whitespaces = True
+        if args.strip_y_whitespaces is None:
+            args.strip_y_whitespaces = True
+        if not cc_explicit:
+            args.color_compression = True
+        if not any(a == "--vivid" or a.startswith("--vivid=") for a in argv):
+            args.vivid = 5
+        if not any(a == "--shading" or a.startswith("--shading=") for a in argv):
+            args.shading = "eevee"
 
     # ── 대화형: 빠진 값 채우기 ──
     args = prompt_missing(args)
