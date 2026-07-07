@@ -3,9 +3,12 @@ r"""
 라리엔 16/8방향 sprite sheet / packed atlas 생성 CLI — **Windows OS 전용 포트**
 (scripts/sheet.py 의 win 버전).
 
-scripts/sheet.py 와 *동작·옵션·출력 100% 동일* 하다(packed atlas / grid sheet · pc/mob/npc
+scripts/sheet.py 와 *packing 동작·옵션·출력이 동일* 하다(packed atlas / grid sheet · pc/mob/npc
 kind · TexturePacker · --texture-pack · --color-compression · --vivid · 대화형 · 무기 장착 ·
-.blend 캐릭터 · pubspec.yaml 자동갱신 등 모두 포함). 차이는 단 세 가지 플랫폼 글루뿐:
+.blend 캐릭터 · pubspec.yaml 자동갱신 · cell 128 SSOT 등). 🛑 단 **cell 잘림 자동 검사
+(--verify-cells)와 자동 조정(--auto-fit-scale)은 macOS sheet.py 전용이며 아직 Windows 에
+미포팅**이다(팀 지적6). Windows 에서 잘림 검증이 필요하면 macOS sheet.py 로 굽거나 verify_cells.py
+로 별도 검사한다. 그 외 플랫폼 글루 차이는 세 가지:
   ① Blender 실행 파일 자동 탐지를 macOS 경로 대신 **Windows 표준 설치 위치**(레지스트리
      Uninstall 키 / Program Files / winget·Microsoft Store / Steam / scoop) 와 PATH 에서
      찾는다 (find_blender + _blender_from_registry).
@@ -129,14 +132,13 @@ ROOT = _find_project_root(HERE)
 # 기본 렌더/패킹 해상도.
 # - DEFAULT_RENDER_RES: Blender 가 저장하는 개별 frame PNG 크기(기본 256×256).
 # - DEFAULT_CELL_SIZE: TexturePacker atlas 의 원본 frame box(orig) 또는 grid cell 크기.
-#   🛑 160 이 최종·SSOT 최고 규정(2026-07-01) — 런타임 actor_animation_set.dart 의
-#   _runtimeSpriteCellPx=160 과 *반드시 일치*. render 256 → 160(scale-frames 자동 160/256=0.625).
-# - RUNTIME_DISPLAY_SIZE: 게임 컴포넌트 표시 크기(기본 128×128). cell 은 화질 축, display 는 크기 축.
-#   "게임에선 128, texture 는 160".
+#   🛑 128 이 최종·SSOT(2026-07-05 pc/npc/mob 전부 128 통일 — macOS sheet.py 와 정합. 과거 pc/npc
+#   160 은 화면 표시 128 과 1:1 이 아니라 화질 이득 없이 iOS OOM 만 키워 폐기). render 256 → 128
+#   (scale-frames 자동 128/256=0.5). 팀 지적6: 과거 win 만 160 으로 남아 macOS 128 SSOT 와 어긋났음.
+# - RUNTIME_DISPLAY_SIZE: 게임 컴포넌트 표시 크기(기본 128×128). texture=display 1:1.
 DEFAULT_RENDER_RES = 256
-DEFAULT_CELL_SIZE = 160
-# mob(몬스터) 기본 cell — pc 만큼 선명할 필요 없어 128 로 낮춰 디스크(atlas PNG) 용량 절감.
-# pc/npc 는 160 유지. --cell-size 를 명시하면 kind 와 무관하게 그 값을 쓴다.
+DEFAULT_CELL_SIZE = 128
+# mob(몬스터) 기본 cell — pc/npc/mob 전부 128 통일이라 동일값.
 DEFAULT_CELL_SIZE_MOB = 128
 RUNTIME_DISPLAY_SIZE = 128
 

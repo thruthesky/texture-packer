@@ -723,13 +723,16 @@ def verify_cells_and_report(frames_dir):
             "--frames", frames_dir, "--json"] if uv
            else ["python3", script, "--frames", frames_dir, "--json"])
     o = subprocess.run(cmd, capture_output=True, text=True)
+    # 🛑 실패는 None 을 반환한다(빈 {}=잘림 없음 과 구분) — 호출부가 --auto-fit-scale 이면 hard fail
+    # 하도록(팀 지적2). 과거엔 실패도 {} 를 돌려 "잘림 없음"처럼 조용히 흘러가 자동 보정을 우회했다.
     if o.returncode not in (0, 2):
-        print("  ⚠️ cell 잘림 검사 실패(무시하고 진행):\n     " + (o.stderr or o.stdout or "")[-300:])
-        return {}
+        print("  ❌ cell 잘림 검사 실패(verify_cells 비정상 종료):\n     " + (o.stderr or o.stdout or "")[-300:])
+        return None
     try:
         per = json.loads(o.stdout)
     except (json.JSONDecodeError, ValueError):
-        return {}
+        print("  ❌ cell 잘림 검사 결과 JSON 파싱 실패:\n     " + (o.stdout or "")[-200:])
+        return None
     clipped = {a: r for a, r in per.items() if r.get("clipped", 0) > 0}
     if not clipped:
         print("  ✅ cell 잘림 검사 — 전 행동 정상(셀 안, 잘림 없음).")
@@ -1324,10 +1327,21 @@ def main():
                 sys.exit("렌더 실패")
             print(f"   ✓ 렌더 완료 — {actual_frames}장 · {_fmt_dur(_r_dt)}"
                   + (f" · {actual_frames / _r_dt:.1f}장/s" if _r_dt > 0 else ""))
+            # 🛑 검사·packing 입력이 될 *최종 프레임* 을 여기서 확정한다 — align_feet 의 세로 이동으로
+            # 칼끝/무기 끝이 새로 잘릴 수 있으므로(팀 지적1·자체 결함1: 과거엔 검사가 정렬 *전*), verify_cells
+            # 가 *정렬 후* 프레임을 봐야 최종 atlas 의 실제 잘림을 잡는다. 정렬은 idempotent(발 0.85면 무변화)라
+            # 매 재렌더마다 안전. verify 여부와 무관하게 항상 정렬(정렬본이 최종 packing 입력).
+            align_frames_feet(frames_dir)
             # ── cell 잘림 검사(--verify-cells) + auto-fit 재렌더 판단 ──
             if not args.verify_cells:
                 break
             _rec = verify_cells_and_report(frames_dir)
+            if _rec is None:  # 검사 자체 실패(의존성/파싱 오류)
+                if args.auto_fit_scale:
+                    sys.exit("❌ cell 잘림 검사 실패 — --auto-fit-scale 은 검사 없이 진행할 수 없다"
+                             "(hard fail). verify_cells.py 의존성(pillow/numpy)·프레임을 확인하라.")
+                print("   ⚠️ 검사 실패 — 잘림 확인 없이 진행(--auto-fit-scale 없음)")
+                break
             if not _rec:
                 break  # 잘림 없음 → 완료
             if _fit >= _max_fit:
@@ -1353,14 +1367,19 @@ def main():
         print("\n(--render-only) 낱장:", frames_dir, "\n완료.")
         return
 
-    # --build-only(렌더 건너뛰고 기존 낱장 재packing): auto-fit 은 못 하지만 기존 프레임의 cell
-    # 잘림은 검사해 알린다(잘리면 --auto-fit-scale 없이 재렌더 필요 — 권장 scale 로 사람이 재실행).
-    if args.build_only and args.verify_cells:
-        print("\n[검사] 기존 낱장 프레임 cell 잘림 검사(--build-only — auto-fit 불가, 리포트만):")
-        _bo_rec = verify_cells_and_report(frames_dir)
-        if _bo_rec:
-            _opts = " ".join(f"--scale-{a} {s}" for a, s in sorted(_bo_rec.items()))
-            print(f"   🛑 잘린 행동 있음 — 아래 옵션으로 *재렌더*(--build-only 제거) 권장:\n     {_opts}")
+    # --build-only(렌더 건너뛰고 기존 낱장 재packing): 검사·packing 입력을 정렬 후 최종 프레임으로
+    # 통일(결함1 — 이전 렌더가 정렬 안 했을 수 있으므로 여기서도 정렬). auto-fit 은 못 하지만 기존
+    # 프레임의 cell 잘림은 검사해 알린다(잘리면 --auto-fit-scale 없이 재렌더 필요 — 권장 scale 로 재실행).
+    if args.build_only:
+        align_frames_feet(frames_dir)
+        if args.verify_cells:
+            print("\n[검사] 기존 낱장 프레임 cell 잘림 검사(--build-only — auto-fit 불가, 리포트만):")
+            _bo_rec = verify_cells_and_report(frames_dir)
+            if _bo_rec is None:
+                print("   ⚠️ 검사 실패 — 잘림 확인 없이 packing 진행(의존성 확인)")
+            elif _bo_rec:
+                _opts = " ".join(f"--scale-{a} {s}" for a, s in sorted(_bo_rec.items()))
+                print(f"   🛑 잘린 행동 있음 — 아래 옵션으로 *재렌더*(--build-only 제거) 권장:\n     {_opts}")
 
     # ── [2] 합치기/패킹 ──
     rel_paths = []
@@ -1373,8 +1392,8 @@ def main():
         java = find_java(args.java_bin)
         print(f"  Java       : {java}")
         classpath = ensure_packer_classpath(args.packer_cp)
-        # TexturePacker 前: 낱장 발(0.85) 정렬 — 행동별 scale(attack 등)의 발 뜸 방지(anchor 정합).
-        align_frames_feet(frames_dir)
+        # 🛑 발 정렬(align_frames_feet)은 이미 [1] 렌더 루프/build-only 에서 *검사 전* 에 수행했다
+        # (결함1 수정 — verify_cells 검사 대상 = 최종 packing 입력). 여기서 중복 정렬하지 않는다.
         # 🛑 _foot/ 마스크는 발 정렬(align_frames_feet) *전용* 이다 — 검·무기를 뺀 캐릭터 실루엣으로
         # 진짜 발 위치를 찾는 빌드용 보조 프레임이며, 런타임 렌더(findSpritesByName('<action>_<DIR>'))
         # 에는 전혀 쓰이지 않는다(이름 패턴 불일치). packing 폴더에 남으면 <name>2.png 로 함께 구워져

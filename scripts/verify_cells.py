@@ -169,9 +169,13 @@ def main():
 
 
 def verify_atlas(atlas_path, as_json):
-    """packed .atlas 의 각 region 이 orig(cell) 대비 잘렸는지 근사 판정.
-    trim 후라 원본 clip 을 직접 못 보지만, offset+size 가 orig 를 넘거나 packed size==orig 로 꽉 찬
-    경우(여백 0)를 clip 후보로 표시한다. 정밀 판정은 --frames(렌더 직후)를 쓴다."""
+    """🛑 정보성 *근사* 검사 — 자동 판정/게이트에 쓰지 말 것(팀 지적4).
+
+    packed .atlas 는 trim 후라 원본 clip 을 *직접 못 본다*. 여기서는 `size>=orig`(여백 0=셀을
+    꽉 채움)를 clip '후보'로만 표시하는데, stripWhitespace off·여백 없는 *정상* 자산도 전부
+    후보로 찍힌다(실측: male_plate.atlas 1024 region 전부). 따라서 잘림 여부의 실제 판정은
+    렌더 직후 낱장 `--frames` 로만 하고, 이 `--atlas` 는 참고 정보로만 쓴다.
+    🛑 exit code 는 *항상 0*(정보성) — 자동 흐름이 exit 2 를 '잘림'으로 오판하지 않게 한다."""
     try:
         with open(atlas_path, encoding="utf-8") as f:
             text = f.read()
@@ -185,17 +189,17 @@ def verify_atlas(atlas_path, as_json):
     suspects = []
     for nm, sw, sh, ow, oh, ox, oy in regions:
         sw, sh, ow, oh, ox, oy = map(int, (sw, sh, ow, oh, ox, oy))
-        # size 가 orig 와 같으면(여백 0) 잘림 의심 — 콘텐츠가 셀을 꽉 채움.
         if sw >= ow or sh >= oh:
             suspects.append((nm, sw, sh, ow, oh))
-    print(f"\n🔍 atlas 근사 검사 — {atlas_path}  (region {len(regions)}개)")
+    print(f"\n🔍 atlas *근사* 검사(정보성) — {atlas_path}  (region {len(regions)}개)")
+    print("  🛑 이 검사는 부정확한 근사다 — 자동 판정 금지. 정확한 잘림 판정은 `--frames`(렌더 직후 낱장).")
     if suspects:
-        print(f"  ⚠️ 셀을 꽉 채운(여백 0=잘림 의심) region {len(suspects)}개 — 정밀 검사는 --frames 권장:")
+        print(f"  ℹ️ 여백 0(꽉 찬) region {len(suspects)}개 — *정상일 수 있음*(trim off·여백 없는 자산). 정밀은 --frames:")
         for nm, sw, sh, ow, oh in suspects[:12]:
             print(f"      {nm}  size {sw}×{sh} / orig {ow}×{oh}")
-        return 2
-    print("  ✅ 모든 region 에 여백 있음(꽉 찬 셀 없음). 정밀 판정은 --frames.")
-    return 0
+    else:
+        print("  ℹ️ 여백 있는 region 만(꽉 찬 셀 없음).")
+    return 0  # 항상 정보성(자동 게이트 오판 방지 — 실제 판정은 --frames)
 
 
 if __name__ == "__main__":
