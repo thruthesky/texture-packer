@@ -44,10 +44,16 @@ def edge_opacity(img, margin, alpha_thresh):
     모델이 그 방향으로 많이 삐져나가 잘린 것이다(잘린 부분은 이미 없어 정확한 폭은 반복 검사로 수렴).
 
     🛑 '안쪽 깊이'로 재면 캐릭터 몸통 세로 길이를 잘림으로 오판한다(테두리에 닿은 몸통이 안쪽까지
-    연속 불투명이라 깊이가 셀에 육박). 그래서 *테두리 라인 위의 불투명 비율* 만 심각도로 쓴다."""
+    연속 불투명이라 깊이가 셀에 육박). 그래서 *테두리 라인 위의 불투명 비율* 만 심각도로 쓴다.
+
+    🛑 견고성: alpha 채널이 없는 이미지(RGB 등)는 clip 판정 불가(convert 시 alpha=255 전체 불투명
+    → 테두리 다 불투명 → false positive)이므로 None 을 반환해 스킵한다. 또 margin 이 프레임 절반
+    이상인 초소형/비정상 프레임은 테두리가 전체를 덮어 오판하므로 margin 을 프레임 1/4 로 클램프한다."""
+    if img.mode not in ("RGBA", "LA", "PA") and "transparency" not in img.info:
+        return None  # alpha 없음 → clip 판정 불가(스킵 신호)
     a = np.asarray(img.convert("RGBA"))[:, :, 3]
     h, w = a.shape
-    m = max(1, int(margin))
+    m = max(1, min(int(margin), (min(h, w) // 4) or 1))  # 초소형 프레임 오판 방지
     op = a > alpha_thresh
     counts = {
         "top": int(op[:m, :].sum()),
@@ -79,9 +85,12 @@ def verify_frames(frames_dir, margin=2, alpha_thresh=8):
             continue  # _foot 마스크 등 규약 외 파일 무시
         action = m.group("action")
         try:
-            counts, frac, (ch, cw) = edge_opacity(Image.open(p), margin, alpha_thresh)
+            eo = edge_opacity(Image.open(p), margin, alpha_thresh)
         except Exception:
             continue
+        if eo is None:
+            continue  # alpha 채널 없음(RGB 등) → clip 판정 불가, 스킵(false positive 방지)
+        counts, frac, (ch, cw) = eo
         rec = per_action.setdefault(action, {
             "frames": 0, "clipped": 0, "max_frac": 0.0, "worst": None,
             "edges": {"top": 0, "bottom": 0, "left": 0, "right": 0}, "cell": (ch, cw),
