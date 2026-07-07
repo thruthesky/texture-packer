@@ -707,6 +707,40 @@ def fix_offset_y(atlas_path):
     print(f"  ✓ Y trim offsetY 보정(발 점프 방지) — {n} region top-left 정합")
 
 
+def verify_cells_and_report(frames_dir):
+    """렌더된 낱장 프레임의 cell 잘림(clip)을 verify_cells.py 로 검사해 리포트하고, 잘린 행동의
+    권장 scale({action: scale})을 반환한다(잘림 없으면 {}). numpy 필요 → uv 격리 실행.
+
+    🛑 왜: run/attack 등 큰 모션이 셀(render_res) 밖으로 나가면 프레임 테두리가 clip 된다.
+    flutter 실행 없이 *생성된 이미지만으로* 이를 잡아 --scale-<action> 권장값을 준다
+    ([verify_cells.py]). --auto-fit-scale 이면 그 권장값으로 자동 재렌더한다(main 루프)."""
+    script = os.path.join(HERE, "verify_cells.py")
+    uv = shutil.which("uv")
+    cmd = ([uv, "run", "--with", "pillow", "--with", "numpy", "python3", script,
+            "--frames", frames_dir, "--json"] if uv
+           else ["python3", script, "--frames", frames_dir, "--json"])
+    o = subprocess.run(cmd, capture_output=True, text=True)
+    if o.returncode not in (0, 2):
+        print("  ⚠️ cell 잘림 검사 실패(무시하고 진행):\n     " + (o.stderr or o.stdout or "")[-300:])
+        return {}
+    try:
+        per = json.loads(o.stdout)
+    except (json.JSONDecodeError, ValueError):
+        return {}
+    clipped = {a: r for a, r in per.items() if r.get("clipped", 0) > 0}
+    if not clipped:
+        print("  ✅ cell 잘림 검사 — 전 행동 정상(셀 안, 잘림 없음).")
+        return {}
+    print(f"  ⚠️ cell 잘림 검사 — {len(clipped)}종 행동에서 셀 밖 잘림(clip) 감지:")
+    rec = {}
+    for a, r in sorted(clipped.items()):
+        edges = ", ".join(f"{e}×{n}" for e, n in r["edges"].items() if n)
+        print(f"       {a}: {r['clipped']}/{r['frames']} 프레임 · 테두리 {r['max_frac'] * 100:.0f}% "
+              f"[{edges}] → 권장 --scale-{a} {r['recommended_scale']}")
+        rec[a] = r["recommended_scale"]
+    return rec
+
+
 def inject_action_scales(atlas_path, action_scales):
     """`.atlas` 첫 page 헤더(`repeat:` 줄 뒤)에 액션별 *생성 scale* 을 custom 메타로 주입한다.
 
@@ -962,6 +996,14 @@ def main():
     ap.add_argument("--build-only", action="store_true",
                     help="합치기/패킹만(기존 outputs/<name>/frames 낱장 재사용)")
     ap.add_argument("--verbose", action="store_true", help="Blender/packer 전체 로그 출력")
+    ap.add_argument("--verify-cells", dest="verify_cells", type=str2bool, nargs="?", const=True,
+                    default=True, metavar="true|false",
+                    help="렌더 후 낱장 프레임의 cell 잘림(clip)을 자동 검사(기본 true). run/attack 등 "
+                         "큰 모션이 셀 밖으로 잘리면 행동별 권장 --scale-<action> 를 출력한다"
+                         "(verify_cells.py, flutter 실행 불필요). false 로 끈다.")
+    ap.add_argument("--auto-fit-scale", dest="auto_fit_scale", action="store_true",
+                    help="잘린 행동을 발견하면 권장 scale 로 *자동 재렌더*(최대 3회 반복해 잘림 0 으로 "
+                         "수렴). pc/npc/mob 큰 모션이 셀 안에 들어오게 사람 개입 없이 자동 조정한다.")
     # ── TexturePacker 전용 ──
     ap.add_argument("--java", default="", dest="java_bin", help="java 실행 파일(기본 자동 탐지)")
     ap.add_argument("--packer-cp", default="",
@@ -1224,52 +1266,80 @@ def main():
     t_all0 = time.monotonic()  # 전체 소요 측정 시작(간략 진행 표시용)
     # ── [1] Blender 렌더 → 낱장 ──
     if not args.build_only:
-        print(f"\n[1] Blender 렌더 중 … (총 {total_frames}장 = {directions}방향 × {sum(frames.get(a, 8) for a in actions)}프레임)")
-        t_r0 = time.monotonic()
-        proc = subprocess.Popen(
-            [blender, "-b", "-P", os.path.join(HERE, "_sheet_render.py"), "--", cfg_path],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
-            encoding="utf-8", errors="replace",
-        )
-        # 간략 진행: 24장마다 진행률·속도·ETA·현재 행동을 한 줄로. --verbose 면 Blender 전체 로그.
-        saved, errs, render_done, cur_action = 0, [], False, ""
-        for line in proc.stdout:
-            line = line.rstrip()
-            if line.startswith("####RENDER_DONE"):
+        # auto-fit-scale: cell 잘림을 발견하면 권장 scale 로 재렌더(최대 3회 수렴). 미지정이면 1회 렌더.
+        _max_fit = 3 if args.auto_fit_scale else 0
+        for _fit in range(_max_fit + 1):
+            if _fit == 0:
+                print(f"\n[1] Blender 렌더 중 … (총 {total_frames}장 = {directions}방향 × {sum(frames.get(a, 8) for a in actions)}프레임)")
+            else:
+                cfg["action_scales"] = action_scales  # auto-fit 으로 낮춘 scale 반영
+                json.dump(cfg, open(cfg_path, "w"), indent=2)
+                print(f"\n[1·auto-fit {_fit}/{_max_fit}] 조정된 scale 로 재렌더 중 …")
+            t_r0 = time.monotonic()
+            proc = subprocess.Popen(
+                [blender, "-b", "-P", os.path.join(HERE, "_sheet_render.py"), "--", cfg_path],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                encoding="utf-8", errors="replace",
+            )
+            # 간략 진행: 24장마다 진행률·속도·ETA·현재 행동을 한 줄로. --verbose 면 Blender 전체 로그.
+            saved, errs, render_done, cur_action = 0, [], False, ""
+            for line in proc.stdout:
+                line = line.rstrip()
+                if line.startswith("####RENDER_DONE"):
+                    render_done = True
+                if args.verbose:
+                    print(line); continue
+                if line.startswith("####ACTION "):
+                    cur_action = (line.split()[1] if len(line.split()) > 1 else "")
+                    print(f"   ▶ 행동 {line[len('####ACTION '):]} 렌더 …", flush=True)
+                elif line.startswith("####"):
+                    print("   " + line[4:])
+                elif line.startswith("Saved:"):
+                    saved += 1
+                    if saved % 24 == 0 or saved == total_frames:
+                        el = time.monotonic() - t_r0
+                        fps = saved / el if el > 0 else 0
+                        eta = (total_frames - saved) / fps if fps > 0 else 0
+                        pct = int(saved / total_frames * 100) if total_frames else 0
+                        tail = f" · {cur_action}" if cur_action else ""
+                        print(f"   … {saved}/{total_frames} ({pct}%) · {fps:.1f}장/s · ETA {_fmt_dur(eta)}{tail}",
+                              flush=True)
+                elif any(k in line for k in ("Error", "Traceback", "Exception", "Failed")):
+                    errs.append(line)
+            proc.wait()
+            actual_frames = (len([f for f in os.listdir(frames_dir) if f.endswith(".png")])
+                             if os.path.isdir(frames_dir) else 0)
+            _r_dt = time.monotonic() - t_r0
+            if proc.returncode == 0 and not render_done and actual_frames >= total_frames:
+                print(f"   ⚠️ RENDER_DONE 마커 누락이나 frames {actual_frames}/{total_frames} 완성 → 진행")
                 render_done = True
-            if args.verbose:
-                print(line); continue
-            if line.startswith("####ACTION "):
-                cur_action = (line.split()[1] if len(line.split()) > 1 else "")
-                print(f"   ▶ 행동 {line[len('####ACTION '):]} 렌더 …", flush=True)
-            elif line.startswith("####"):
-                print("   " + line[4:])
-            elif line.startswith("Saved:"):
-                saved += 1
-                if saved % 24 == 0 or saved == total_frames:
-                    el = time.monotonic() - t_r0
-                    fps = saved / el if el > 0 else 0
-                    eta = (total_frames - saved) / fps if fps > 0 else 0
-                    pct = int(saved / total_frames * 100) if total_frames else 0
-                    tail = f" · {cur_action}" if cur_action else ""
-                    print(f"   … {saved}/{total_frames} ({pct}%) · {fps:.1f}장/s · ETA {_fmt_dur(eta)}{tail}",
-                          flush=True)
-            elif any(k in line for k in ("Error", "Traceback", "Exception", "Failed")):
-                errs.append(line)
-        proc.wait()
-        actual_frames = (len([f for f in os.listdir(frames_dir) if f.endswith(".png")])
-                         if os.path.isdir(frames_dir) else 0)
-        _r_dt = time.monotonic() - t_r0
-        if proc.returncode == 0 and not render_done and actual_frames >= total_frames:
-            print(f"   ⚠️ RENDER_DONE 마커 누락이나 frames {actual_frames}/{total_frames} 완성 → 진행")
-            render_done = True
-        if proc.returncode != 0 or not render_done:
-            print("   ❌ 렌더 실패 — 입력 FBX / Blender 로그 확인:")
-            for e in errs[-20:]:
-                print("     " + e)
-            sys.exit("렌더 실패")
-        print(f"   ✓ 렌더 완료 — {actual_frames}장 · {_fmt_dur(_r_dt)}"
-              + (f" · {actual_frames / _r_dt:.1f}장/s" if _r_dt > 0 else ""))
+            if proc.returncode != 0 or not render_done:
+                print("   ❌ 렌더 실패 — 입력 FBX / Blender 로그 확인:")
+                for e in errs[-20:]:
+                    print("     " + e)
+                sys.exit("렌더 실패")
+            print(f"   ✓ 렌더 완료 — {actual_frames}장 · {_fmt_dur(_r_dt)}"
+                  + (f" · {actual_frames / _r_dt:.1f}장/s" if _r_dt > 0 else ""))
+            # ── cell 잘림 검사(--verify-cells) + auto-fit 재렌더 판단 ──
+            if not args.verify_cells:
+                break
+            _rec = verify_cells_and_report(frames_dir)
+            if not _rec:
+                break  # 잘림 없음 → 완료
+            if _fit >= _max_fit:
+                if args.auto_fit_scale:
+                    print(f"   ⚠️ auto-fit {_max_fit}회 후에도 잔여 잘림 — 위 권장 scale 로 수동 재실행 권장")
+                break
+            _changed = False
+            for _a, _s in _rec.items():
+                _cur = float(action_scales.get(_a, args.scale))
+                if _s < _cur - 1e-6:
+                    action_scales[_a] = _s
+                    print(f"   ↻ auto-fit: --scale-{_a} {_cur:g}→{_s:g}")
+                    _changed = True
+            if not _changed:
+                print("   ⚠️ 더 줄일 수 없음(SCALE_MIN 도달) — 잔여 잘림은 셀/카메라 조정 필요")
+                break
 
     if args.render_only:
         print("\n(--render-only) 낱장:", frames_dir, "\n완료.")
