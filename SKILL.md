@@ -138,7 +138,9 @@ python3 .claude/skills/texture-packer/scripts/sheet.py \
 | `--directions {8\|16}` | 16(npc 8) | 신규는 16 고정. 8 은 legacy 재생성 전용 |
 | `--run-animation {true\|false}` | — | mob run 애니 포함 여부(지정 시 대화형 질문 생략) |
 | `--rotation [true\|false]` | **false**(미지정 시 대화형 질문·기본 제안 n·비대화형은 false) | 회전 packing(공간 절약). 🛑 actor(pc/mob/npc)는 발 어긋남·패킹 20분+ 지연으로 false 권장. 정적 타일/decor 는 true 로 공간 절약. `--no-rotation` 은 false 별칭 |
-| `--strip-whitespace [true\|false]` | **true**(미지정 시 대화형 질문·기본 제안 Y·비대화형은 true) | 가로(X) 여백 trim. true 면 좌우 투명 여백을 잘라 아틀라스 가로 폭·page 픽셀(=RAM)을 줄임(발 y 무관·안전). 🛑 세로(Y) trim 은 발 정렬(0.85) 보존 위해 항상 off. `--keep-whitespace` 는 false 별칭 |
+| `--strip-x-whitespaces [true\|false]` | **true**(미지정 시 대화형·비대화형 true) | 가로(X) 여백 trim. 좌우 투명 여백 제거 → 아틀라스 폭·page 픽셀(=RAM)↓(발 y 무관·안전) |
+| `--strip-y-whitespaces [true\|false]` | **true**(미지정 시 대화형·비대화형 true) | 세로(Y) 여백 trim. 상하 투명 여백 제거 → page 높이·RAM↓. 발 점프(drop off)는 pack 후 `.atlas` offsetY 를 top-left 로 보정해 방지(libGDX bottom-left↔flame top-left 좌표계 정합, `fix_offset_y`) |
+| `--strip-whitespace`·`--keep-whitespace` | (하위호환) | `--strip-x/y-whitespaces` 를 **동시** 설정하는 별칭 |
 | `--render-only / --build-only` | — | 렌더만 / packing만 |
 | `--outputs PATH` | `outputs/<name>` | 중간 frames 작업 폴더(결과 폴더인 `--output` 과 다름) |
 | `--packer-cp PATH` | — | gdx jar classpath 수동 지정(기본은 `scripts/tools/` 자동) |

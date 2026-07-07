@@ -480,17 +480,30 @@ def prompt_missing(args):
                 f"회전 packing(공간 절약) 켤까요?{warn} [y/N]", "N"))
         else:
             args.rotation = False  # 비대화형 기본 false (사용자 지시 2026-07-07)
-    # 9) 가로(X) 여백 trim — 기본 true. 미지정(--strip-whitespace/--keep-whitespace 둘 다 안 줌)이면
-    #    대화형으로 물어보고(기본 Y=true·비대화형은 true), 명시했으면 그 값을 그대로 쓴다.
-    #    가로 trim 은 발 y 와 무관해 위험이 없고 page 폭(=RAM)을 줄이므로 기본 켜기를 권한다.
-    #    (세로 Y trim 은 발 정렬 보존 위해 이 옵션과 무관하게 항상 off.)
-    if args.strip_whitespace is None:
+    # 9) 가로(X)/세로(Y) 여백 trim — 둘 다 기본 true. 미지정이면 대화형으로 물어봄(기본 Y).
+    #    하위호환: --strip-whitespace/--keep-whitespace 는 x·y 를 동시 설정(개별 미지정 시).
+    _both = getattr(args, "_strip_both", None)
+    if _both is not None:
+        if args.strip_x_whitespaces is None:
+            args.strip_x_whitespaces = _both
+        if args.strip_y_whitespaces is None:
+            args.strip_y_whitespaces = _both
+    #    X trim: 좌우 투명 여백 제거(발 y 무관·안전) → 아틀라스 폭·RAM↓.
+    if args.strip_x_whitespaces is None:
         if interactive:
-            args.strip_whitespace = str2bool(_ask(
-                "가로(X) 여백 trim 켤까요? 좌우 투명 여백을 잘라 아틀라스 폭·RAM 을 줄인다"
-                "(발 y 무관·안전) [Y/n]", "Y"))
+            args.strip_x_whitespaces = str2bool(_ask(
+                "가로(X) 여백 trim? 좌우 투명 여백 제거 → 아틀라스 폭·RAM↓(발 y 무관·안전) [Y/n]", "Y"))
         else:
-            args.strip_whitespace = True  # 비대화형 기본 true (사용자 지시 2026-07-07)
+            args.strip_x_whitespaces = True  # 비대화형 기본 true (사용자 지시 2026-07-07)
+    #    Y trim: 상하 투명 여백 제거(page 높이·RAM↓). 발 점프(drop off)는 pack 후 .atlas offsetY 를
+    #    top-left 로 보정해 방지(libGDX bottom-left ↔ flame top-left 좌표계 정합, fix_offset_y).
+    if args.strip_y_whitespaces is None:
+        if interactive:
+            args.strip_y_whitespaces = str2bool(_ask(
+                "세로(Y) 여백 trim? 상하 투명 여백 제거 → page 높이·RAM↓. 발 점프는 offset 보정으로 방지 [Y/n]",
+                "Y"))
+        else:
+            args.strip_y_whitespaces = True  # 비대화형 기본 true (사용자 지시 2026-07-07)
     return args
 
 
@@ -561,13 +574,13 @@ def ensure_packer_classpath(explicit_cp):
 def write_pack_json(frames_dir, args):
     """TexturePacker 설정(pack.json)을 frames_dir 에 쓴다(libGDX 관례)."""
     settings = {
-        # 🛑 세로(Y) trim 은 *끈다* — 발 y 정렬(align_feet 0.85) 보존. 세로 trim 을 켜면 프레임마다
-        # 다른 offset.y 가 생기고, flame_texturepacker 의 useOriginalSize offset 렌더가 이를 발
-        # 위치에 어긋나게 반영해 attack(검이 오르내림)에서 발이 크게 점프한다(실측: off.y=9~19).
-        # 세로 trim off → offset.y=0 → cell 세로가 그대로 유지돼 발이 anchor(0.85)에 고정된다.
-        # 가로(X) trim 은 유지(발 y 무관, 아틀라스 가로 폭 절약).
-        "stripWhitespaceX": bool(args.strip_whitespace),
-        "stripWhitespaceY": False,
+        # 세로(Y) trim: 상하 투명 여백 제거로 page 높이·RAM↓. 과거엔 발 점프(off.y=9~19) 때문에
+        # 껐으나, 원인이 libGDX offsetY(bottom-left = 하단 여백)를 flame_texturepacker 가 top-left
+        # offset 으로 그대로 더해(finalPos.y = offsetY + topLeft.y) 발이 어긋나는 *좌표계 불일치* 임을
+        # 규명 → pack 후 [fix_offset_y] 가 .atlas offsetY 를 top-left(new = origH - size_h - old)로
+        # 보정해 발 위치를 보존한다. 가로(X) trim 은 발 y 무관(좌우 여백)이라 보정 불필요.
+        "stripWhitespaceX": bool(args.strip_x_whitespaces),
+        "stripWhitespaceY": bool(args.strip_y_whitespaces),
         "rotation": bool(getattr(args, "rotation", False)),
         "pot": bool(args.pot),
         "maxWidth": int(args.max_page_w),
@@ -638,6 +651,60 @@ def align_frames_feet(frames_dir, foot_frac=0.85):
               + (o.stderr or o.stdout or "")[-300:])
     else:
         print(f"  ✓ 낱장 발 정렬(0.85) — {o.stdout.strip()}")
+
+
+def fix_offset_y(atlas_path):
+    """Y trim(stripWhitespaceY) 시 libGDX 가 쓴 bottom-left offsetY 를 flame(top-left) 기준으로 보정.
+
+    🛑 근본 원인(2026-07-07 규명): stripWhitespaceY=true 면 각 region 에 offset y(하단 여백)가
+    생기는데, libGDX TexturePacker 는 offset y 를 bottom-left origin 으로 기록한다. flame_
+    texturepacker 렌더는 offset 을 top-left(y-down)로 *그대로* 더해(finalPos.y = offsetY + topLeft.y)
+    발이 (상단여백 - 하단여백)만큼 어긋난다(발 점프, 실측 off.y=9~19). → top-left offsetY =
+    origH - size_h - bottomOffsetY 로 재계산해 offset 줄의 y 를 덮어쓴다(x 는 좌우 여백이라 flame 과
+    정합해 그대로). 그러면 flame 이 프레임을 원본 box 안 정확한 위치에 배치해 발이 anchor(0.85)에 고정.
+
+    region 블록 순서(libGDX): `size: w,h` → `orig: ow,oh` → `offset: ox,oy`. offset 줄에서 앞서 읽은
+    size h·orig oh 로 보정한다. 🛑 이 보정식은 libGDX bottom-left 가정 — 실측(실제 렌더 + 게임 발
+    위치)으로 방향을 검증해야 하며, 어긋나면 부호/식을 조정한다."""
+    try:
+        with open(atlas_path, encoding="utf-8") as f:
+            lines = f.read().split("\n")
+    except OSError as e:
+        print(f"  ⚠️ .atlas 열기 실패 — offsetY 보정 생략: {e}")
+        return
+    out, size_h, orig_h, n = [], None, None, 0
+    for ln in lines:
+        s = ln.strip()
+        if s.startswith("size:"):
+            try:
+                size_h = float(s.split(",")[1])
+            except (IndexError, ValueError):
+                size_h = None
+        elif s.startswith("orig:"):
+            try:
+                orig_h = float(s.split(",")[1])
+            except (IndexError, ValueError):
+                orig_h = None
+        elif s.startswith("offset:") and size_h is not None and orig_h is not None:
+            try:
+                parts = s[len("offset:"):].split(",")
+                ox, oy = float(parts[0]), float(parts[1])
+                oy_new = orig_h - size_h - oy
+                indent = ln[:len(ln) - len(ln.lstrip())]
+                out.append(f"{indent}offset: {ox:g}, {oy_new:g}")
+                n += 1
+                size_h = orig_h = None
+                continue
+            except (IndexError, ValueError):
+                pass
+        out.append(ln)
+    try:
+        with open(atlas_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(out))
+    except OSError as e:
+        print(f"  ⚠️ .atlas 쓰기 실패 — offsetY 보정 생략: {e}")
+        return
+    print(f"  ✓ Y trim offsetY 보정(발 점프 방지) — {n} region top-left 정합")
 
 
 def inject_action_scales(atlas_path, action_scales):
@@ -918,15 +985,22 @@ def main():
     ap.add_argument("--no-rotation", dest="rotation", action="store_const", const=False,
                     help="`--rotation false` 의 별칭(하위호환) — 회전 packing 을 끈다.")
     ap.add_argument("--pot", action="store_true", help="force POT 켬(기본 끔)")
-    ap.add_argument("--strip-whitespace", dest="strip_whitespace", type=str2bool,
+    ap.add_argument("--strip-x-whitespaces", dest="strip_x_whitespaces", type=str2bool,
                     nargs="?", const=True, default=None, metavar="true|false",
-                    help="가로(X) 여백 trim. **기본 true**. 미지정 시 대화형으로 물어보고(기본 제안 "
-                         "Y·비대화형이면 true), `--strip-whitespace true|false` 로 명시하면 질문을 "
-                         "건너뛴다. true 면 idle_ESE 처럼 좌우 투명 여백을 잘라 아틀라스 가로 폭·page "
-                         "픽셀(=RAM)을 줄인다(발 y 무관·안전). false 면 원본 셀 폭을 유지. 🛑 세로(Y) "
-                         "trim 은 발 정렬(0.85) 보존 위해 이 옵션과 무관하게 항상 off.")
-    ap.add_argument("--keep-whitespace", dest="strip_whitespace", action="store_const", const=False,
-                    help="`--strip-whitespace false` 의 별칭(하위호환) — 가로 여백 trim 을 끈다.")
+                    help="가로(X) 여백 trim. **기본 true**(미지정 시 대화형·비대화형은 true). true 면 "
+                         "좌우 투명 여백을 잘라 아틀라스 폭·page 픽셀(=RAM)↓(발 y 무관·안전). false 면 "
+                         "원본 셀 폭 유지.")
+    ap.add_argument("--strip-y-whitespaces", dest="strip_y_whitespaces", type=str2bool,
+                    nargs="?", const=True, default=None, metavar="true|false",
+                    help="세로(Y) 여백 trim. **기본 true**(미지정 시 대화형·비대화형은 true). true 면 "
+                         "상하 투명 여백을 잘라 page 높이·RAM↓. 발 점프(drop off)는 pack 후 .atlas "
+                         "offsetY 를 top-left 기준으로 보정해 방지(libGDX bottom-left ↔ flame top-left "
+                         "좌표계 정합). false 면 보정 불필요(offsetY=0).")
+    ap.add_argument("--strip-whitespace", dest="_strip_both", type=str2bool,
+                    nargs="?", const=True, default=None, metavar="true|false",
+                    help="(하위호환) --strip-x-whitespaces 와 --strip-y-whitespaces 를 동시 설정.")
+    ap.add_argument("--keep-whitespace", dest="_strip_both", action="store_const", const=False,
+                    help="(하위호환) --strip-whitespace false 별칭 — x·y trim 모두 끈다.")
     ap.add_argument("--no-fast", dest="fast", action="store_false",
                     help="정밀(느린) 패킹. 기본 fast=True(16방향 액터 필수).")
     ap.set_defaults(fast=True)
@@ -1241,6 +1315,10 @@ def main():
         if not os.path.isfile(atlas) or not pages:
             sys.exit(f"패킹 산출물이 없습니다(atlas={atlas}, pages={pages}). --verbose 로 확인.")
         print(f"  ✓ packed atlas → {os.path.relpath(atlas, ROOT)}  ({_fmt_dur(time.monotonic() - t_p0)})")
+        # 🛑 Y trim(strip_y_whitespaces) 시 libGDX bottom-left offsetY → flame top-left 로 보정해
+        # 발 점프(drop off) 방지. X-only trim(strip_y=false)이면 offsetY=0 이라 보정이 무해(no-op).
+        if args.strip_y_whitespaces:
+            fix_offset_y(atlas)
         # 액션별 생성 scale 을 .atlas 헤더에 주입 → 런타임이 1/scale 로 display 배율 자동 복원.
         inject_action_scales(atlas, action_scales)
         if args.color_compression:
