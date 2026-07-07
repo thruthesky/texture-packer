@@ -82,14 +82,28 @@ KIND_MODEL_DIR = {"pc": "game-assets/characters",
 ANIM_ROOT = "game-assets/animations"   # <variant>/{action}.fbx
 
 # 모델 탐색:  os.path.join(ROOT, KIND_MODEL_DIR[kind], <character>)
-# 출력 폴더:  os.path.join(ROOT, "assets", kind, name)   → <name>.png / <name>.atlas
+# 출력 폴더:  os.path.join(output_base, kind, name)   → <name>.png / <name>.atlas
+#   output_base = --output DIR 지정 시 그 경로(절대경로 아니면 ROOT 기준 상대 해석),
+#                 미지정 시 os.path.join(ROOT, "assets")  ← 기본
 # grid 정보:  os.path.join(ROOT, "game-assets", "sprites")  (--texture-pack false)
 # 작업 폴더:  os.path.join(ROOT, "outputs", name)          (--outputs 미지정 시)
 # pubspec:    os.path.join(ROOT, "pubspec.yaml")
 ```
 
+```python
+# --output 처리 (sheet.py / sheet-win.py 동일)
+if args.output_base:
+    output_base = args.output_base if os.path.isabs(args.output_base) \
+        else os.path.abspath(os.path.join(ROOT, args.output_base))   # cwd 아님 — ROOT 기준
+else:
+    output_base = os.path.join(ROOT, "assets")
+out_folder = os.path.join(output_base, args.kind, name)
+```
+
 - pubspec 관리 블록: `# >>> AUTO(sheet.py packed actors) >>>` … 이번 `<name>` 의
   `assets/<kind>/<name>/<name>.png[, .atlas]` 만 추가(전체 폴더 등록 금지).
+- 🛑 `--output` 지정 시 **루트 pubspec.yaml 자동 갱신은 건너뛴다** — 대상이 루트 `assets/` 가
+  아닌 별도 앱/뷰어일 수 있어 루트 pubspec 을 오염시키지 않는다(기본 출력일 때만 update_pubspec 호출).
 - 🛑 게임 pc/mob 로드는 *오직* `assets/<pc|mob>/<name>/<name>.atlas`. 격자
   `assets/render/actors/` 는 폐기(2026-07-01). atlas 없으면 투명 placeholder + 재생성 목록 로그.
 

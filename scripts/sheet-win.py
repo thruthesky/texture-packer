@@ -981,6 +981,13 @@ def main():
     ap.add_argument("--draft", action="store_true", help="초고속 미리보기(render_res=cell·AA 끔)")
     ap.add_argument("--actions", default=None,
                     help="행동 순서/목록. 기본 pc/mob=idle,walk,attack,hit,death,run; npc=idle,look,talk,walk,wave")
+    ap.add_argument("--output", default=None, dest="output_base",
+                    help="결과 atlas/png 를 저장할 베이스 폴더(기본: 프로젝트 루트의 assets/). "
+                         "지정하면 <output>/<kind>/<name>/<name>.{png,atlas} 로 자동 생성·저장한다. "
+                         "예: --output .\\viewer\\assets → .\\viewer\\assets\\<kind>\\<name>\\<name>.{png,atlas}. "
+                         "🛑 --output 을 주면 pubspec.yaml 자동 갱신은 건너뛴다(대상 폴더가 다른 앱/뷰어일 수 "
+                         "있어 루트 pubspec 을 오염시키지 않기 위함 — 필요 시 수동 등록). "
+                         "중간 frames 폴더는 --outputs(복수형)로 따로 지정한다.")
     ap.add_argument("--outputs", default=None, help="중간 작업(frames) 폴더. 기본 outputs/<name>")
     ap.add_argument("--info-out", default=None,
                     help="manifest/layout 저장 폴더(grid 모드, 기본 game-assets/sprites)")
@@ -1162,8 +1169,16 @@ def main():
     if args.scale_frames is None:
         args.scale_frames = cell / render_res
 
-    # ── 출력 경로: assets/<kind>/<name>/ ──
-    out_folder = os.path.join(ROOT, "assets", args.kind, name)
+    # ── 출력 경로: <output_base>/<kind>/<name>/ (기본 output_base = ROOT/assets) ──
+    # --output 미지정 → 프로젝트 루트의 assets/ (Flutter Flame 표준 자산 폴더).
+    # --output DIR 지정 → 그 폴더 아래 <kind>/<name>/ 을 자동 생성. 상대경로는 cwd 가 아니라
+    #   프로젝트 루트(ROOT) 기준으로 해석해, 실행 위치와 무관하게 결과 위치가 예측된다.
+    if args.output_base:
+        output_base = args.output_base if os.path.isabs(args.output_base) \
+            else os.path.abspath(os.path.join(ROOT, args.output_base))
+    else:
+        output_base = os.path.join(ROOT, "assets")
+    out_folder = os.path.join(output_base, args.kind, name)
     outputs = os.path.abspath(args.outputs) if args.outputs \
         else os.path.abspath(os.path.join(ROOT, "outputs", name))
     frames_dir = os.path.join(outputs, "frames")
@@ -1327,9 +1342,15 @@ def main():
         print(f"  📄 manifest: {r.get('manifest')}")
         rel_paths = [os.path.relpath(png_path, ROOT)]
 
-    # ── [끝] pubspec.yaml 갱신 (이번 파일만) ──
-    print("\n[pubspec] 갱신 중 …")
-    update_pubspec(rel_paths)
+    # ── [끝] pubspec.yaml 갱신 (기본 assets/ 출력일 때만) ──
+    # --output 지정 시엔 대상이 루트 assets/ 가 아닐 수 있어(예: 별도 뷰어 앱) 루트 pubspec 을
+    # 건드리지 않는다 — 그 폴더는 사용자가 관리하는 커스텀 위치이므로 자동 등록을 건너뛴다.
+    if args.output_base:
+        print(f"\n[pubspec] --output 지정 → 루트 pubspec.yaml 자동 갱신 건너뜀. "
+              f"결과: {os.path.relpath(out_folder, ROOT)}\\  (필요 시 대상 앱에 수동 등록)")
+    else:
+        print("\n[pubspec] 갱신 중 …")
+        update_pubspec(rel_paths)
 
     print("\n완료.")
 
