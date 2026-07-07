@@ -97,7 +97,17 @@ production 정책(위반 거절):
   # 대화형(인자 없이) — character/kind/name/animations 를 순서대로 물어봄
   ./scripts/sheet.py
 """
-import argparse, glob, json, os, subprocess, sys, shutil, urllib.request
+import argparse, glob, json, os, subprocess, sys, shutil, time, urllib.request
+
+
+def _fmt_dur(seconds):
+    """초 → 사람이 읽는 짧은 형식('43s' · '2m28s' · '1h03m'). 진행/속도/ETA 표시용."""
+    s = int(round(seconds))
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m{s % 60:02d}s"
+    return f"{s // 3600}h{(s % 3600) // 60:02d}m"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -1126,33 +1136,45 @@ def main():
     blender = find_blender(args.blender)
     total_frames = directions * sum(frames.get(a, 8) for a in actions)
 
+    t_all0 = time.monotonic()  # 전체 소요 측정 시작(간략 진행 표시용)
     # ── [1] Blender 렌더 → 낱장 ──
     if not args.build_only:
-        print("\n[1] Blender 렌더 중 …")
+        print(f"\n[1] Blender 렌더 중 … (총 {total_frames}장 = {directions}방향 × {sum(frames.get(a, 8) for a in actions)}프레임)")
+        t_r0 = time.monotonic()
         proc = subprocess.Popen(
             [blender, "-b", "-P", os.path.join(HERE, "_sheet_render.py"), "--", cfg_path],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
             encoding="utf-8", errors="replace",
         )
-        saved, errs, render_done = 0, [], False
+        # 간략 진행: 24장마다 진행률·속도·ETA·현재 행동을 한 줄로. --verbose 면 Blender 전체 로그.
+        saved, errs, render_done, cur_action = 0, [], False, ""
         for line in proc.stdout:
             line = line.rstrip()
             if line.startswith("####RENDER_DONE"):
                 render_done = True
             if args.verbose:
                 print(line); continue
-            if line.startswith("####"):
+            if line.startswith("####ACTION "):
+                cur_action = (line.split()[1] if len(line.split()) > 1 else "")
+                print(f"   ▶ 행동 {line[len('####ACTION '):]} 렌더 …", flush=True)
+            elif line.startswith("####"):
                 print("   " + line[4:])
             elif line.startswith("Saved:"):
                 saved += 1
                 if saved % 24 == 0 or saved == total_frames:
+                    el = time.monotonic() - t_r0
+                    fps = saved / el if el > 0 else 0
+                    eta = (total_frames - saved) / fps if fps > 0 else 0
                     pct = int(saved / total_frames * 100) if total_frames else 0
-                    print(f"   … {saved}/{total_frames} ({pct}%)", flush=True)
+                    tail = f" · {cur_action}" if cur_action else ""
+                    print(f"   … {saved}/{total_frames} ({pct}%) · {fps:.1f}장/s · ETA {_fmt_dur(eta)}{tail}",
+                          flush=True)
             elif any(k in line for k in ("Error", "Traceback", "Exception", "Failed")):
                 errs.append(line)
         proc.wait()
         actual_frames = (len([f for f in os.listdir(frames_dir) if f.endswith(".png")])
                          if os.path.isdir(frames_dir) else 0)
+        _r_dt = time.monotonic() - t_r0
         if proc.returncode == 0 and not render_done and actual_frames >= total_frames:
             print(f"   ⚠️ RENDER_DONE 마커 누락이나 frames {actual_frames}/{total_frames} 완성 → 진행")
             render_done = True
@@ -1161,6 +1183,8 @@ def main():
             for e in errs[-20:]:
                 print("     " + e)
             sys.exit("렌더 실패")
+        print(f"   ✓ 렌더 완료 — {actual_frames}장 · {_fmt_dur(_r_dt)}"
+              + (f" · {actual_frames / _r_dt:.1f}장/s" if _r_dt > 0 else ""))
 
     if args.render_only:
         print("\n(--render-only) 낱장:", frames_dir, "\n완료.")
@@ -1170,6 +1194,7 @@ def main():
     rel_paths = []
     if args.texture_pack:
         print("\n[2] TexturePacker 로 packed atlas 만드는 중 …")
+        t_p0 = time.monotonic()
         if not os.path.isdir(frames_dir) or not any(
                 f.endswith(".png") for f in os.listdir(frames_dir)):
             sys.exit(f"패킹할 낱장 PNG 가 없습니다: {frames_dir}")
@@ -1204,7 +1229,7 @@ def main():
         pages = sorted(glob.glob(os.path.join(out_folder, name + "*.png")))
         if not os.path.isfile(atlas) or not pages:
             sys.exit(f"패킹 산출물이 없습니다(atlas={atlas}, pages={pages}). --verbose 로 확인.")
-        print(f"  ✓ packed atlas → {os.path.relpath(atlas, ROOT)}")
+        print(f"  ✓ packed atlas → {os.path.relpath(atlas, ROOT)}  ({_fmt_dur(time.monotonic() - t_p0)})")
         # 액션별 생성 scale 을 .atlas 헤더에 주입 → 런타임이 1/scale 로 display 배율 자동 복원.
         inject_action_scales(atlas, action_scales)
         if args.color_compression:
@@ -1252,7 +1277,7 @@ def main():
         print("\n[pubspec] 갱신 중 …")
         update_pubspec(rel_paths)
 
-    print("\n완료.")
+    print(f"\n완료. (총 {_fmt_dur(time.monotonic() - t_all0)})")
 
 
 if __name__ == "__main__":

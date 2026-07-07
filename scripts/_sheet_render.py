@@ -849,6 +849,8 @@ for name in ACTIONS:
         bpy.context.view_layer.update()
         frames = [bpy.context.scene.frame_current] * n
         print(f"####INFO 정적 렌더(애니없음): {name} x{n}")
+    # 현재 작업 진행 마커 — sheet.py 가 읽어 "▶ 행동 idle 렌더 …" 로 간략 표시(--verbose 는 전체 로그).
+    print(f"####ACTION {name} {DIRECTIONS}dir×{len(frames)}f={DIRECTIONS * len(frames)}")
     for label, az in zip(DIR_LABELS, DIR_AZIMUTHS):
         for idx, fr in enumerate(frames):
             bpy.context.scene.frame_set(fr)
