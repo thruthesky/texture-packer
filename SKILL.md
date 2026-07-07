@@ -146,7 +146,7 @@ python3 .claude/skills/texture-packer/scripts/sheet.py \
 | `--outputs PATH` | `outputs/<name>` | 중간 frames 작업 폴더(결과 폴더인 `--output` 과 다름) |
 | `--packer-cp PATH` | — | gdx jar classpath 수동 지정(기본은 `scripts/tools/` 자동) |
 | `--verbose` | off | Blender/packer **전체 로그** 출력. 미지정(기본) 시 **간략 진행**만: 단계 `[1]렌더 [2]packing`, `N/총장(%)·장/s·ETA·현재 행동`, 단계별·총 소요시간(`✓ 렌더 완료 — 1024장 · 3m18s · 5.2장/s`) |
-| `--verify-cells [true\|false]` | **true** | 렌더 후 낱장 프레임의 **cell 잘림(clip) 자동 검사**(flutter 불필요). run/attack 등 큰 모션이 셀 밖으로 잘리면 행동별 권장 `--scale-<action>` 출력 |
+| `--verify-cells [true\|false]` | **true** | 렌더 후 낱장 프레임의 **cell 잘림(clip) 자동 검사**(flutter 불필요). run/attack 등 큰 모션이 셀 밖으로 잘리면 행동별 권장 `--scale-<action>` 출력. `--build-only`(재packing) 시에도 기존 프레임을 검사해 리포트(auto-fit 은 렌더 경로만) |
 | `--auto-fit-scale` | off | 잘린 행동 발견 시 **권장 scale 로 자동 재렌더**(최대 3회 반복 → 잘림 0 수렴). pc/npc/mob 큰 모션을 사람 개입 없이 셀 안에 맞춤 |
 
 ## 런타임: Flutter/Flame 이 `.atlas`/`.png` 를 파싱해 게임 월드에 표시

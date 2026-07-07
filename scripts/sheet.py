@@ -1345,6 +1345,15 @@ def main():
         print("\n(--render-only) 낱장:", frames_dir, "\n완료.")
         return
 
+    # --build-only(렌더 건너뛰고 기존 낱장 재packing): auto-fit 은 못 하지만 기존 프레임의 cell
+    # 잘림은 검사해 알린다(잘리면 --auto-fit-scale 없이 재렌더 필요 — 권장 scale 로 사람이 재실행).
+    if args.build_only and args.verify_cells:
+        print("\n[검사] 기존 낱장 프레임 cell 잘림 검사(--build-only — auto-fit 불가, 리포트만):")
+        _bo_rec = verify_cells_and_report(frames_dir)
+        if _bo_rec:
+            _opts = " ".join(f"--scale-{a} {s}" for a, s in sorted(_bo_rec.items()))
+            print(f"   🛑 잘린 행동 있음 — 아래 옵션으로 *재렌더*(--build-only 제거) 권장:\n     {_opts}")
+
     # ── [2] 합치기/패킹 ──
     rel_paths = []
     if args.texture_pack:
