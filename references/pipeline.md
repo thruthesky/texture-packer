@@ -250,3 +250,4 @@ for _fit in range(1 + (3 if args.auto_fit_scale else 0)):
 | **pc kind**(ambusher --kind pc) | scale 1.3 → 6종 clip → auto-fit(attack 0.68·death 0.6·walk 0.84…) → 재렌더 잘림 0. mob 과 동일 행동·경로에서 pc 로도 수렴 실증 |
 | **--build-only 검사** | 잘림 있는 기존 프레임(attack scale 1.3) 재packing → `[검사]` 가 attack 26%·death 1% clip 감지 + 권장 scale + 🛑 재렌더 권장 출력 후 packing 계속(auto-fit 은 렌더 경로만) |
 | **16방향(production) + 프레임 1** | 🐛 버그 발견·수정: `--idle 1` 등 프레임 1 → `sample_frames` 의 `(n-1)` 나눗셈 ZeroDivisionError 로 렌더 크래시 → `n<=1` 가드 추가([_sheet_render.py](../scripts/_sheet_render.py) `sample_frames`). 수정 후 16방향 렌더 성공(112장) → attack 26% clip → auto-fit 0.68 → 재렌더 잘림 0 |
+| **verify `--atlas` + auto-fit 안전** | packed atlas 근사 검사(`--atlas`): region 96개 파싱·여백 판정 동작(정밀은 `--frames`). auto-fit **무한루프 이중 방어** — `for _fit in range(_max_fit+1)`(최대 4회 렌더) + SCALE_MIN(0.6) 도달 시 `if not _changed: break` 조기 종료 |
