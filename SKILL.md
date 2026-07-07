@@ -122,6 +122,29 @@ python3 .claude/skills/texture-packer/scripts/sheet.py \
 2. atlas 없는 pc/mob 은 투명 placeholder(안 보임)로 처리될 수 있다(프로젝트 로더 정책에 따름).
 3. 시각 검증은 **실제 Flame 앱에서** 수행한다 — analyze/단위테스트로 갈음하지 않는다.
 
+### 3.5 cell 잘림(clip) 방지 — 자동 검사·조정 워크플로우 (flutter 불필요)
+
+pc/npc/mob 의 큰 모션(run/attack 등)이나 큰 자산(뿔·날개·무기)이 셀 밖으로 잘리는 것을,
+flutter 실행 없이 **생성 이미지 검사만으로** 잡아 자동 조정한다:
+
+1. **전체 스캔** — 어떤 자산이 잘리나 한 번에(진행 표시·예상 시간):
+   ```bash
+   bash scripts/check_all_cells.sh mob 'game-assets/blend/*.blend'
+   # → 자산별 [i/N] ✅ 정상 / ⚠️ 잘린 행동 + 권장 --scale-<action>
+   ```
+2. **자동 조정 재생성** — 잘린 자산을 `--auto-fit-scale` 로:
+   ```bash
+   sheet.py --kind mob --name <name> --character <file> --auto-fit-scale
+   # 잘림 감지 → scale step 하강 → 재렌더 → 잘림 0 수렴(최대 6회, 0.6 하한)
+   ```
+3. **개별 정밀 검사**(선택): `sheet.py … --render-only`(렌더 후 자동 검사) 또는
+   `verify_cells.py --frames outputs/<name>/frames`.
+
+🛑 원리: 작게 구운 scale 은 `.atlas` 의 `laryen.actionScale` 메타로 기록돼 게임 런타임이
+`1/scale` 로 **원래 크기 복원** — 잘림 방지(작게 굽기)와 화면 크기(원래)가 분리된다.
+난이도별 수렴(실측): 작은 잘림 1회 최소 하강 · 여러 행동 1회 · 큰 top 잘림 step 하강 여러 회
+· 물리적 불가(여백 없음)만 0.6 하한 안전종료 + margin 조정 안내(상세 [references/pipeline.md §9](references/pipeline.md)).
+
 ### 4. 옵션 요약 (자세한 로직·소스는 [references/pipeline.md](references/pipeline.md))
 
 | 옵션 | 기본 | 뜻 |
