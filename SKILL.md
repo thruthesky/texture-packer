@@ -133,7 +133,7 @@ python3 .claude/skills/texture-packer/scripts/sheet.py \
 | `--render-res N` | max(256,cell) | frame 렌더 해상도(→ 128 로 자동 축소, `--scale-frames`) |
 | `--idle/--walk/--attack/--hit/--death/--run N` | 8/12/16/8/8/12 | 행동별 프레임 수 |
 | `--look/--talk/--wave N` | 8 | npc 전용 행동 프레임 수 |
-| `--scale-<action>` | idle 1.0 · walk 0.9 · run 0.9 · hit 0.9 · death 1.0 (attack=대화형 0.8 · npc look/talk/wave=전역 `--scale`) | 행동별 생성 scale. `<1` 이면 모델을 작게 구워(무기/모션 128 셀 밖 잘림 방지) `.atlas` 의 `laryen.actionScale.<action>` 메타에 기록 → **게임 런타임이 1/scale 로 원래 크기 복원**([references/pipeline.md](references/pipeline.md) §6) |
+| `--scale-<action>` | **미지정 시 대화형 질문**(기본 제안 idle 1.0 · walk 0.9 · run 0.9 · attack 0.8 · hit 0.9 · death 1.0; npc 는 idle·walk 만·비대화형은 기본 제안값) | 행동별 생성 scale. 지정 안 하면 개발자에게 물어봄. `<1` 이면 모델을 작게 구워(무기/모션 128 셀 밖 잘림 방지) `.atlas` 의 `laryen.actionScale.<action>` 메타에 기록 → **게임 런타임이 1/scale 로 원래 크기 복원**([references/pipeline.md](references/pipeline.md) §6) |
 | `--weapon / --weapon-bone …` | — | 무기 손 본 장착 |
 | `--directions {8\|16}` | 16(npc 8) | 신규는 16 고정. 8 은 legacy 재생성 전용 |
 | `--run-animation {true\|false}` | — | mob run 애니 포함 여부(지정 시 대화형 질문 생략) |
