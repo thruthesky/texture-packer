@@ -36,6 +36,15 @@ Options are identical to sheet-win.py except for these defaults:
   --size        : 384 (instead of the production render cell — a large preview).
   --idle/--walk/--run/--attack/--hit/--death : default to **3** each when omitted (instead of production 8~12).
 
+Preview only specific actions (skip rendering the whole set):
+  --only-attack                 render just the attack action (combine e.g. --only-attack --only-walk)
+  --only attack                 same, one action
+  --only idle,attack            a subset
+  These override --actions and keep the canonical column order. Fastest way to eyeball one animation.
+  Example — attack only:
+    py scripts\sheet-preview-win.py --character game-assets\blend\male.blend --name male `
+      --animations game-assets\animations\default --only-attack
+
 Per-action generation scale (--scale-<action>):
   Same as sheet-win.py — pass --scale-attack 0.8 (etc.) to shrink one action's model inside the cell so
   the preview matches the framing production will bake (e.g. a swung weapon that fits). Unset actions
@@ -405,7 +414,20 @@ def main():
                     help="Ultra-fast preview — render_res=cell(1x), AA off. Just to quickly check direction/anim matching.")
     ap.add_argument("--png-colors", type=int, default=256,
                     help="PNG color count (palette quantization). Default 256. 0=lossless RGBA.")
-    ap.add_argument("--actions", default=",".join(DEFAULT_ACTIONS), help="Action order/list (col layout order)")
+    ap.add_argument("--actions", default=None, help="Action order/list (col layout order). "
+                    f"Default = all: {','.join(DEFAULT_ACTIONS)}. Reorders/limits columns.")
+    # Preview-only convenience: render just one (or a few) actions so you don't wait for the whole set.
+    #   --only attack           (one action)
+    #   --only idle,attack      (a subset)
+    #   --only-attack           (boolean flag; combine e.g. --only-attack --only-walk)
+    # Any of these narrow the set to those actions (canonical column order preserved); they override
+    # --actions when both are given.
+    ap.add_argument("--only", default=None, metavar="ACTION[,ACTION...]",
+                    help="Preview only these actions (e.g. --only attack · --only idle,attack). "
+                         "Shortcut so you don't render every action. Overrides --actions.")
+    for _act in DEFAULT_ACTIONS:
+        ap.add_argument(f"--only-{_act}", dest="only_flags", action="append_const", const=_act,
+                        help=f"Preview only the '{_act}' action (combine e.g. --only-attack --only-walk).")
     ap.add_argument("--outputs", default=None,
                     help="Intermediate work folder. Default outputs/<name>_preview")
     ap.add_argument("--sheet-out", default=None,
@@ -422,7 +444,33 @@ def main():
 
     cell = parse_size(args.cell_size)
     directions = PREVIEW_DIRECTIONS   # fixed at 4 directions — preview only
-    actions = [a.strip() for a in args.actions.split(",") if a.strip()]
+
+    # -- resolve which actions to render --------------------------------
+    # Precedence: --only-<action> flags / --only  >  --actions  >  all (DEFAULT_ACTIONS).
+    # The "only" forms are a preview convenience so you can render just one action (e.g. --only-attack)
+    # instead of the whole set. Unknown action names are rejected. Column order always follows the
+    # canonical DEFAULT_ACTIONS order (so a subset stays laid out consistently), except an explicit
+    # --actions list is honored verbatim (it may reorder columns).
+    def _valid(names, src):
+        bad = [a for a in names if a not in DEFAULT_ACTIONS]
+        if bad:
+            sys.exit(f"Unknown action(s) in {src}: {', '.join(bad)}\n"
+                     f"   -> valid actions: {', '.join(DEFAULT_ACTIONS)}")
+        return names
+
+    only = list(dict.fromkeys(args.only_flags or []))          # from --only-<action> flags (dedup)
+    if args.only:                                              # from --only a,b (merge with flags)
+        only += [a.strip() for a in args.only.split(",") if a.strip()]
+        only = list(dict.fromkeys(only))
+    if only:
+        _valid(only, "--only")
+        actions = [a for a in DEFAULT_ACTIONS if a in only]    # canonical order, subset
+        if args.actions:
+            print(f"  info: --only overrides --actions -> rendering only: {', '.join(actions)}")
+    elif args.actions:
+        actions = _valid([a.strip() for a in args.actions.split(",") if a.strip()], "--actions")
+    else:
+        actions = list(DEFAULT_ACTIONS)
 
     # -- input existence checks (default character) --
     args.character = resolve_character(args.character, "character (--character)")
