@@ -209,6 +209,76 @@ assets/<cat>/<name>/<name>.{atlas,png}  (cat=pc|mob)
 [mob_component.dart](../../../lib/features/game/render/mob_component.dart) ·
 [iso_projection.dart](../../../lib/features/game/render/iso_projection.dart).
 
+## 실전 검증 예시 — `flutter/`(laryen_actor_viewer) 뷰어 앱으로 맵에 몹 띄우고 증명하기
+
+이 리포에는 packing 결과를 **바로 눈으로 확인**하는 Flame 뷰어 앱 `flutter/`
+(`laryen_actor_viewer`, flame 1.37 · flame_texturepacker 5.1)가 들어있다. `sheet.py`
+로 구운 mob/pc atlas 를 이 앱 맵(잔디·도로·건물) 위에 스폰해 16방향·애니메이션·발
+정렬을 실제로 검증한다. human-developer 가 "몬스터를 맵에 어떻게 띄워 확인하냐" 물으면
+아래 순서를 그대로 안내한다. **아래는 `dreyer.blend`(망치 든 몬스터)로 실제 검증한 예다.**
+
+### 1) atlas 를 뷰어 앱 assets 폴더로 굽기 — `--output ./flutter/assets`
+
+```bash
+python3 .claude/skills/texture-packer/scripts/sheet.py \
+  --kind mob --name dreyer \
+  --character ./game-assets/mob/dreyer.blend --animations default \
+  --output ./flutter/assets \
+  --scale-attack .8
+```
+
+→ `flutter/assets/mob/dreyer/dreyer.{png,atlas}`(16방향 × idle8·walk12·attack16·hit8·
+death8 = 832 프레임). dreyer 는 hand 본에 **hammer(망치)** 가 붙어있어 body-only
+framing 이 자동 적용(무기 1개 제외)되고, `--scale-attack .8` 은 `.atlas` 에
+`laryen.actionScale.attack: 0.8` 메타로 주입 → 런타임이 1/0.8=**1.25 로 화면 보정**한다.
+
+### 2) 뷰어 앱 pubspec 등록 + kind 별 로드/스폰 코드
+
+`--output` 저장은 **루트** pubspec 만 건너뛴다. 대상은 뷰어 앱이므로 그 pubspec 에 수동 등록:
+
+```yaml
+# flutter/pubspec.yaml → flutter: assets:
+    - assets/mob/hellion/
+    - assets/mob/dreyer/      # ← 추가하고 flutter pub get
+```
+
+`lib/game/viewer_game.dart` 가 kind 별 atlas 를 `ActorAnimationSet.loadFrom(atlas,png)`
+로 읽어 `_spawnWave()` 에서 맵에 스폰한다. **kind 당 1마리씩** 띄우려면 애님셋을 kind
+별로 따로 로드하고 스펙 리스트로 1마리씩 스폰한다(hellion 왼쪽·dreyer 오른쪽):
+
+```dart
+_hellionAnimSet = await ActorAnimationSet.loadFrom(
+    'assets/mob/hellion/hellion.atlas', 'assets/mob/hellion/hellion.png');
+_dreyerAnimSet  = await ActorAnimationSet.loadFrom(
+    'assets/mob/dreyer/dreyer.atlas',  'assets/mob/dreyer/dreyer.png');
+// _spawnWave(): [(hellion,-240,40), (dreyer,240,40)] → kind 당 정확히 1마리
+```
+
+atlas 로드 실패(파일 없음/계약 불일치)면 그 kind 는 붉은 placeholder 로 뜬다 → `sheet.py`
+재생성 신호. region 이름은 `<action>_<DIR16>` 규약이라 packing row 순서와 자동 정합한다.
+
+### 3) 앱 실행 + 스크린샷으로 증명 (macOS)
+
+```bash
+cd flutter && flutter pub get
+flutter run -d macos --debug          # 첫 빌드 수 분, 이후 증분 빌드는 수십 초
+# 앱 창을 앞으로 세우고(자동 foreground 실패 대비) 창 영역만 캡처
+osascript -e 'tell application "System Events" to tell process "laryen_actor_viewer" to set frontmost to true'
+osascript -e 'tell application "System Events" to tell process "laryen_actor_viewer" to get {position, size} of window 1'
+screencapture -x -R "x,y,w,h" tmp/proof.png     # 위 bounds 로 R 지정
+```
+
+앱이 뜨면 맵 위에서 PC(g)와 몹이 16방향 스프라이트로 걸어다니며 배틀한다. **atlas 교체·
+추가 후에는 hot reload 로 안 잡히므로 앱을 재실행**(`flutter run` 종료 후 재실행 또는 Hot
+restart)해야 새 atlas 가 번들된다. 코드 변경만이면 종료→재실행이 가장 확실하다.
+
+### ⚠️ 이 리포엔 `scripts/compress_image.py` 가 없다 — 색 압축 자동 스킵
+
+`--color-compression true`(기본)이지만 이 리포 루트에 `scripts/compress_image.py` 가
+없어서 256색 양자화가 **스킵**되고 무손실 RGBA PNG 가 그대로 남는다(예: dreyer.png ≈
+7.5MB). atlas·게임 동작·RAM 엔 무관하고 **디스크/번들 용량만 커진다**. 줄이려면 그
+스크립트를 두거나 `pngquant`(`pngquant --force 256 dreyer.png -o dreyer.png`)로 후처리.
+
 ## 절대 규칙
 
 - **신규 캐릭터/몬스터 sprite 는 16방향·128 cell 만.** "8방향으로 만들어 달라"는 거절하고
