@@ -36,6 +36,16 @@ Options are identical to sheet-win.py except for these defaults:
   --size        : 384 (instead of the production render cell — a large preview).
   --idle/--walk/--run/--attack/--hit/--death : default to **3** each when omitted (instead of production 8~12).
 
+Per-action generation scale (--scale-<action>):
+  Same as sheet-win.py — pass --scale-attack 0.8 (etc.) to shrink one action's model inside the cell so
+  the preview matches the framing production will bake (e.g. a swung weapon that fits). Unset actions
+  fall back to the global --scale. Unlike production, the preview never *prompts* for these (it is a
+  non-interactive eyeball tool); pass them to mirror the exact scales your real atlas build will use.
+
+Progress display:
+  The render step now prints per-action markers plus percent · fps · ETA (like sheet-win.py) and a
+  timing summary per pass. Use --verbose for the full Blender log.
+
 Per-action character override:
   --character is the *default* model for every action. To render one action from a different model,
   pass --character-<action> (e.g. --character-attack other.fbx). Each overridden action is rendered in
@@ -44,7 +54,7 @@ Per-action character override:
     py scripts\sheet-preview-win.py --character game-assets\characters\male.fbx --kind male `
       --animations game-assets\animations\default --character-attack game-assets\characters\male_v2.fbx
 """
-import argparse, glob, json, os, subprocess, sys, shutil
+import argparse, glob, json, os, subprocess, sys, shutil, time
 
 # Force stdout/stderr to UTF-8 so unicode output does not die with UnicodeEncodeError on
 # Windows consoles (cp1252/cp949).
@@ -54,12 +64,29 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
+
+def _fmt_dur(seconds):
+    """Seconds -> short human form ('43s' · '2m28s' · '1h03m') for progress/speed/ETA display."""
+    s = int(round(seconds))
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m{s % 60:02d}s"
+    return f"{s // 3600}h{(s % 3600) // 60:02d}m"
+
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 # Preview defaults — the three axes that differ from production sheet-win.py.
 PREVIEW_DIRECTIONS = 4            # (1) fixed at 4 directions (N/E/S/W cardinals)
 PREVIEW_FRAMES_PER_ACTION = 3     # (2) fixed at 3 frames per action (when omitted)
 PREVIEW_CELL_DEFAULT = "384"      # (3) bigger cell (image) — 384 vs. the production render cell
 DEFAULT_ACTIONS = ["idle", "walk", "attack", "hit", "death", "run"]   # col order
+# Suggested per-action generation scale (matches sheet.py / sheet-win.py SCALE_PROMPT_DEFAULTS).
+# Only applied when the matching --scale-<action> is passed — the preview never *prompts* for it
+# (it is a non-interactive eyeball tool). Passing --scale-attack 0.8 lets the preview reflect the
+# same framing production will bake, so what you eyeball matches the real atlas. <1 shrinks the
+# model in the cell (weapon/motion clipping avoidance); the preview shows exactly that shrink.
+SCALE_PROMPT_DEFAULTS = {"idle": 1.0, "walk": 0.9, "run": 0.9, "attack": 0.8, "hit": 0.9, "death": 1.0}
 TEXTURE_LIMIT = 8192
 SUPPORTED_EXT = (".fbx", ".glb", ".gltf")
 CHAR_EXT = SUPPORTED_EXT + (".blend",)
@@ -339,6 +366,17 @@ def main():
     ap.add_argument("--attack", type=int, help=f"attack frame count (defaults to {PREVIEW_FRAMES_PER_ACTION})")
     ap.add_argument("--hit", type=int, help=f"hit frame count (defaults to {PREVIEW_FRAMES_PER_ACTION})")
     ap.add_argument("--death", type=int, help=f"death frame count (defaults to {PREVIEW_FRAMES_PER_ACTION})")
+    # Per-action generation scale — same as sheet.py / sheet-win.py. <1 shrinks that action's model
+    # inside the cell so the preview matches the framing production will bake (e.g. --scale-attack 0.8
+    # so a swung weapon fits). Unset actions fall back to the global --scale (no change). Unlike the
+    # production script, the preview never *prompts* for these (it is non-interactive) — pass them to
+    # mirror the exact scales you will use in the real atlas build.
+    for _act in DEFAULT_ACTIONS:
+        _pd = SCALE_PROMPT_DEFAULTS.get(_act)
+        ap.add_argument(f"--scale-{_act}", type=float, default=None, dest=f"scale_{_act}",
+                        help=f"'{_act}' action generation scale (unset = global --scale)"
+                             + (f". Production suggests {_pd:g}." if _pd is not None else "")
+                             + " <1 renders the model smaller in the cell (matches production framing).")
     ap.add_argument("--weapon", default=None,
                     help="Weapon model (.fbx/.glb) — when set, attach to hand bone and render together (NOTE: T-pose character).")
     ap.add_argument("--weapon-bone", default=None, help="Weapon attach bone (default mixamorig:RightHand).")
@@ -465,6 +503,14 @@ def main():
         if v is not None:
             frames[a] = v
 
+    # Per-action generation scale — same contract as sheet.py / sheet-win.py. The render helper
+    # (_sheet_render.py -> _sheet_preview_render.py) reads cfg["action_scales"] and uses
+    # ACTION_SCALES.get(action, global scale) per action, so an unset action falls back to --scale.
+    action_scales = {}
+    for a in actions:
+        ov = getattr(args, f"scale_{a}", None)
+        action_scales[a] = float(ov) if ov is not None else float(args.scale)
+
     if args.render_res:
         render_res = args.render_res
     elif args.draft:
@@ -494,6 +540,7 @@ def main():
         "loop_actions": ["idle", "walk", "run"],
         "render_res": render_res, "elev": args.elev, "margin": args.margin,
         "scale": args.scale,
+        "action_scales": action_scales,
         "shading": args.shading,
         "color_level": int(args.vivid),
         "png_colors": args.png_colors,
@@ -561,6 +608,11 @@ def main():
           + f"   vivid={args.vivid}/9 (contrast+brightness boost)")
     print(f"  framing    : auto-fit (full model incl. weapon), margin x{args.margin}, scale x{args.scale}"
           + ("" if args.scale == 1.0 else ("  <- bigger" if args.scale > 1.0 else "  <- smaller")))
+    _scale_ov = {a: s for a, s in action_scales.items() if abs(s - float(args.scale)) > 1e-9}
+    if _scale_ov:
+        print(f"  act scale  : "
+              + "   ".join(f"{a}={s:g}" for a, s in _scale_ov.items())
+              + "   (per-action generation scale — matches production framing)")
     print(f"  render res : {render_res}px  ->  Lanczos3 downsample to {cell} (premul alpha)"
           + ("   draft(1x, AA off)" if args.draft else f"   ({render_res//cell}x supersample)"))
     print(f"  frames/cell: " + "   ".join(f"{a}={frames.get(a, PREVIEW_FRAMES_PER_ACTION)}" for a in actions))
@@ -580,26 +632,39 @@ def main():
             pass_frames = directions * sum(frames.get(a, PREVIEW_FRAMES_PER_ACTION) for a in pacts)
             tag = (f"  (pass {pi + 1}/{len(render_passes)} · {os.path.basename(pchar)} "
                    f"· {', '.join(pacts)})" if multipass else "")
-            print(f"\n[1/2] Blender rendering (4-direction preview){tag} ...")
+            print(f"\n[1/2] Blender rendering (4-direction preview){tag} ... "
+                  f"({pass_frames} frames = {directions} dir × "
+                  f"{sum(frames.get(a, PREVIEW_FRAMES_PER_ACTION) for a in pacts)} frames)")
+            t_r0 = time.monotonic()
             proc = subprocess.Popen(
                 [blender, "-b", "-P", _RENDER_DST, "--", pcfg_path],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
                 encoding="utf-8", errors="replace",
             )
-            saved, errs, render_done = 0, [], False
+            # Concise progress: every 12 frames print percent · speed · ETA · current action.
+            # --verbose prints the full Blender log instead.
+            saved, errs, render_done, cur_action = 0, [], False, ""
             for line in proc.stdout:
                 line = line.rstrip()
                 if line.startswith("####RENDER_DONE"):
                     render_done = True
                 if args.verbose:
                     print(line); continue
-                if line.startswith("####"):
+                if line.startswith("####ACTION "):
+                    cur_action = (line.split()[1] if len(line.split()) > 1 else "")
+                    print(f"   > action {line[len('####ACTION '):]} rendering ...", flush=True)
+                elif line.startswith("####"):
                     print("   " + line[4:])
                 elif line.startswith("Saved:"):
                     saved += 1
                     if saved % 12 == 0 or saved == pass_frames:
+                        el = time.monotonic() - t_r0
+                        fps = saved / el if el > 0 else 0
+                        eta = (pass_frames - saved) / fps if fps > 0 else 0
                         pct = int(saved / pass_frames * 100) if pass_frames else 0
-                        print(f"   ... {saved}/{pass_frames} ({pct}%)", flush=True)
+                        tail = f" · {cur_action}" if cur_action else ""
+                        print(f"   ... {saved}/{pass_frames} ({pct}%) · {fps:.1f} fps · "
+                              f"ETA {_fmt_dur(eta)}{tail}", flush=True)
                 elif any(k in line for k in ("Error", "Traceback", "Exception", "Failed")):
                     errs.append(line)
             proc.wait()
@@ -608,6 +673,7 @@ def main():
                           if f.endswith(".png") and f.rsplit("_", 2)[0] in pacts]
                          if os.path.isdir(frames_dir) else [])
             actual_frames = len(pass_pngs)
+            _r_dt = time.monotonic() - t_r0
             if proc.returncode == 0 and not render_done and actual_frames >= pass_frames:
                 print(f"   warn: RENDER_DONE marker missing but frames {actual_frames}/{pass_frames} complete -> proceeding")
                 render_done = True
@@ -619,6 +685,8 @@ def main():
                     print(f"     (exit code 0 but no RENDER_DONE marker + frames {actual_frames}/{pass_frames} "
                           "short — suspect FBX/GLB path/format. Use --verbose for full logs)")
                 sys.exit("render failed")
+            print(f"   OK render done — {actual_frames} frames · {_fmt_dur(_r_dt)}"
+                  + (f" · {actual_frames / _r_dt:.1f} fps" if _r_dt > 0 else ""))
 
     if not args.render_only:
         print("\n[2/2] Compositing preview sprite sheet ...")
