@@ -1015,7 +1015,8 @@ def main():
                     help="🚀 원클릭 최적 프리셋 — `--texture-pack true --auto-fit-scale "
                          "--color-compression true --vivid 5 --rotation true --strip-x-whitespaces true "
                          "--strip-y-whitespaces true --shading eevee` 를 한 번에 켠다(shading 의 "
-                         "'true'=eevee). 대화형 질문 없이 "
+                         "'true'=eevee · --kind mob 이면 --run-animation false 도 자동 적용해 run 애니 "
+                         "제외·디스크↓). 대화형 질문 없이 "
                          "pc/mob/npc 를 잘림 없이 자동 조정 + 최대 압축으로 패킹한다. 🛑 개별 옵션을 함께 "
                          "명시하면 *그 값이 우선*(auto 는 미지정 항목만 채운다) — 예 `--auto --rotation "
                          "false` 는 회전만 끄고 나머지 프리셋은 유지. auto-fit 이 켜지므로 --scale-<action>·"
@@ -1087,6 +1088,8 @@ def main():
         if not cc_explicit:
             args.color_compression = True
             args._color_compression_explicit = True  # color-compression 대화형 질문 억제
+        if args.kind == "mob" and args.run_animation is None:
+            args.run_animation = False  # mob 은 run 애니 제외(디스크↓) — 대화형 질문(run 포함?)도 억제
         if args.rotation is None:
             args.rotation = True
         if args.strip_x_whitespaces is None:
