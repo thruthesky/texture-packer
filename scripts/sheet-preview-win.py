@@ -24,12 +24,12 @@ Self-contained design (shared production helpers untouched):
 
 Usage examples (Windows PowerShell — line continuation is backtick `):
   # Mixamo-rig character FBX + Mixamo animation folder -> 4-dir, 3-frame, 384px preview
-  py scripts\sheet-preview-win.py --character game-assets\characters\male.fbx --kind male `
+  py scripts\sheet-preview-win.py --character game-assets\characters\male.fbx --name male `
     --animations game-assets\animations\default
 
   # Make the cell even bigger (e.g. 512) — watch the 8192 limit depending on col count
   py scripts\sheet-preview-win.py --character game-assets\monsters\demonic_king.fbx `
-    --kind demonic_king --animations game-assets\animations\default --shading texture --size 512
+    --name demonic_king --animations game-assets\animations\default --shading texture --size 512
 
 Options are identical to sheet-win.py except for these defaults:
   --directions  : fixed at 4 (not changeable — preview is 4-direction only).
@@ -51,7 +51,7 @@ Per-action character override:
   pass --character-<action> (e.g. --character-attack other.fbx). Each overridden action is rendered in
   its own Blender pass (same animation folder, different mesh/rig) and composited into the same sheet.
   Example — body for idle/walk, a variant for attack:
-    py scripts\sheet-preview-win.py --character game-assets\characters\male.fbx --kind male `
+    py scripts\sheet-preview-win.py --character game-assets\characters\male.fbx --name male `
       --animations game-assets\animations\default --character-attack game-assets\characters\male_v2.fbx
 """
 import argparse, glob, json, os, subprocess, sys, shutil, time
@@ -104,12 +104,12 @@ EXAMPLES = r"""
   Output -> outputs\<name>_preview\<name>.png (does NOT pollute production assets/)
 
   # * Mixamo-rig character FBX + Mixamo animation folder
-  py scripts\sheet-preview-win.py --character game-assets\characters\male.fbx --kind male `
+  py scripts\sheet-preview-win.py --character game-assets\characters\male.fbx --name male `
     --animations game-assets\animations\default
 
   # * Bigger cell (512) — with 18 cols that's 9216 > 8192, so reduce actions via --actions or keep 384
   py scripts\sheet-preview-win.py --character game-assets\monsters\demonic_king.fbx `
-    --kind demonic_king --animations game-assets\animations\default --shading texture --actions idle,walk,attack --size 512
+    --name demonic_king --animations game-assets\animations\default --shading texture --actions idle,walk,attack --size 512
 """
 
 
@@ -354,8 +354,10 @@ def main():
                              f"(default = --character). Same format as --character.")
     ap.add_argument("--animations", required=True,
                     help="External Mixamo animation folder ({action}.fbx/.glb) — *required*. Matching bones -> applied directly.")
-    ap.add_argument("--kind", required=True,
-                    help="Actor name = sprite file name. Preview output is outputs/<kind>_preview/<kind>.png")
+    ap.add_argument("--name", "--kind", dest="name", required=True,
+                    help="Output sprite/file name (preview only — no pc/npc/mob category). "
+                         "Preview output is outputs/<name>_preview/<name>.png. (--kind is a "
+                         "deprecated alias kept for backward compatibility.)")
     ap.add_argument("--cell-size", "--size", dest="cell_size", default=PREVIEW_CELL_DEFAULT,
                     help=f"Cell pixel size (preview default {PREVIEW_CELL_DEFAULT} — large preview). Sum(frames)*cell <= 8192")
     ap.add_argument("--k", type=float, default=128.0,
@@ -518,7 +520,7 @@ def main():
     else:
         render_res = max(256, cell * 2)
 
-    name = args.kind
+    name = args.name
     # Preview output goes to outputs/<name>_preview/ so it never pollutes production assets/.
     preview_dir = os.path.abspath(args.outputs) if args.outputs \
         else os.path.abspath(os.path.join("outputs", name + "_preview"))
@@ -534,7 +536,7 @@ def main():
         "outputs": outputs, "name": name, "frames_dir": frames_dir,
         "measure_path": measure_path,
         "sheet_out_dir": sheet_out_dir, "info_out_dir": info_out_dir,
-        "kind": args.kind, "k": args.k,
+        "kind": name, "k": args.k,   # "kind" is only a manifest label here (preview has no category)
         "size": cell, "directions": directions,
         "frames": frames, "actions": actions,
         "loop_actions": ["idle", "walk", "run"],
@@ -591,7 +593,7 @@ def main():
     over = sheet_w > TEXTURE_LIMIT or sheet_h > TEXTURE_LIMIT
     print("=" * 64)
     print(f"  PREVIEW mode — 4 directions (N/E/S/W) · 3 frames per action · big {cell}px cell")
-    print(f"  actor      : {args.character}  (format {char_ext}, name={args.kind})")
+    print(f"  actor      : {args.character}  (format {char_ext}, name={args.name})")
     _overrides = [(a, action_character[a]) for a in actions
                   if os.path.abspath(action_character[a]) != os.path.abspath(args.character)]
     for a, ca in _overrides:
