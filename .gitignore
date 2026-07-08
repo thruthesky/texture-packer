@@ -10,7 +10,7 @@ scripts/tools/
 # sheet.py 중간 작업 산출물(낱장 프레임 등)
 outputs/
 
-# sheet-preview-win.py 가 매 실행마다 원본 _sheet_render.py/_sheet_build.py 에서
+# sheet_preview.py 가 매 실행마다 원본 _sheet_render.py/_sheet_build.py 에서
 # 재생성하는 4방향 preview 헬퍼(원본이 SSOT — 커밋 금지).
 scripts/_sheet_preview_render.py
 scripts/_sheet_preview_build.py

@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 r"""
-Laryen **4-direction PREVIEW** sprite sheet generator CLI — **Windows OS only**.
+Laryen **4-direction PREVIEW** sprite sheet generator CLI — **macOS + Windows**.
 
-A lightweight preview variant of scripts/sheet-win.py. Its purpose is to quickly *eyeball*
-a character/monster's facing, pose, and animation matching. It differs from the production
-sheet-win.py in three ways:
+A lightweight preview variant of scripts/sheet.py (macOS) / sheet-win.py (Windows). Its purpose is
+to quickly *eyeball* a character/monster's facing, pose, and animation matching. It differs from the
+production sheet in three ways:
   (1) Renders **4 directions only** (N/E/S/W cardinals) instead of production 16/8. row count 4 = 1/4 the height.
   (2) Renders **3 frames per action only** (instead of production idle 8 / walk 12 etc.) — fixed 3 for every action.
   (3) Makes the **cell (image) bigger** (default **384px** vs. the production render cell — larger preview detail).
   -> 4 dir x 3 frame x 6 action = 18 col x 4 row. 384px cell -> 6912x1536 sheet (within 8192).
 
 NOTE: this is NOT production asset generation. New PC/monster *runtime* sprites MUST be made with
-sheet-win.py at 16 directions / 160 cell (CLAUDE.md SSOT). This script is a **human-eyeball preview only**,
+sheet.py at 16 directions / 128 cell (CLAUDE.md SSOT). This script is a **human-eyeball preview only**,
 and by default writes to the outputs/<name>_preview/ work folder so it never pollutes production assets/.
+
+Cross-platform (macOS + Windows):
+  Blender / Python resolution branches on sys.platform. On macOS it looks in
+  /Applications/Blender.app and PATH; on Windows it reads the registry Uninstall keys + standard
+  install locations. The build-step Python interpreter prefers python3 (macOS) or python/py
+  (Windows). Everything else — the 4-direction preview logic — is identical on both.
 
 Self-contained design (shared production helpers untouched):
   The production _sheet_render.py / _sheet_build.py only allow directions in {8, 16} (4 rejected).
@@ -22,16 +28,20 @@ Self-contained design (shared production helpers untouched):
   Both files are *regenerated* from the production originals on every run (the originals are the SSOT),
   so fixing an original also keeps the preview helpers up to date (see _ensure_preview_helpers below).
 
-Usage examples (Windows PowerShell — line continuation is backtick `):
-  # Mixamo-rig character FBX + Mixamo animation folder -> 4-dir, 3-frame, 384px preview
-  py scripts\sheet-preview-win.py --character game-assets\characters\male.fbx --name male `
+Usage examples:
+  # macOS (line continuation is backslash \):
+  ./scripts/sheet_preview.py --character game-assets/characters/male.fbx --name male \
+    --animations game-assets/animations/default
+
+  # Windows PowerShell (line continuation is backtick `):
+  py scripts\sheet_preview.py --character game-assets\characters\male.fbx --name male `
     --animations game-assets\animations\default
 
   # Make the cell even bigger (e.g. 512) — watch the 8192 limit depending on col count
-  py scripts\sheet-preview-win.py --character game-assets\monsters\demonic_king.fbx `
-    --name demonic_king --animations game-assets\animations\default --shading texture --size 512
+  ./scripts/sheet_preview.py --character game-assets/monsters/demonic_king.fbx \
+    --name demonic_king --animations game-assets/animations/default --shading texture --size 512
 
-Options are identical to sheet-win.py except for these defaults:
+Options are identical to the production sheet except for these defaults:
   --directions  : fixed at 4 (not changeable — preview is 4-direction only).
   --size        : 384 (instead of the production render cell — a large preview).
   --idle/--walk/--run/--attack/--hit/--death : default to **3** each when omitted (instead of production 8~12).
@@ -42,36 +52,41 @@ Preview only specific actions (skip rendering the whole set):
   --only idle,attack            a subset
   These override --actions and keep the canonical column order. Fastest way to eyeball one animation.
   Example — attack only:
-    py scripts\sheet-preview-win.py --character game-assets\blend\male.blend --name male `
-      --animations game-assets\animations\default --only-attack
+    ./scripts/sheet_preview.py --character game-assets/blend/male.blend --name male \
+      --animations game-assets/animations/default --only-attack
 
 Per-action generation scale (--scale-<action>):
-  Same as sheet-win.py — pass --scale-attack 0.8 (etc.) to shrink one action's model inside the cell so
-  the preview matches the framing production will bake (e.g. a swung weapon that fits). Unset actions
-  fall back to the global --scale. Unlike production, the preview never *prompts* for these (it is a
-  non-interactive eyeball tool); pass them to mirror the exact scales your real atlas build will use.
+  Same as the production sheet — pass --scale-attack 0.8 (etc.) to shrink one action's model inside the
+  cell so the preview matches the framing production will bake (e.g. a swung weapon that fits). Unset
+  actions fall back to the global --scale. Unlike production, the preview never *prompts* for these (it
+  is a non-interactive eyeball tool); pass them to mirror the exact scales your real atlas build will use.
 
 Progress display:
-  The render step now prints per-action markers plus percent · fps · ETA (like sheet-win.py) and a
-  timing summary per pass. Use --verbose for the full Blender log.
+  The render step now prints per-action markers plus percent · fps · ETA (like the production sheet) and
+  a timing summary per pass. Use --verbose for the full Blender log.
 
 Per-action character override:
   --character is the *default* model for every action. To render one action from a different model,
   pass --character-<action> (e.g. --character-attack other.fbx). Each overridden action is rendered in
   its own Blender pass (same animation folder, different mesh/rig) and composited into the same sheet.
   Example — body for idle/walk, a variant for attack:
-    py scripts\sheet-preview-win.py --character game-assets\characters\male.fbx --name male `
-      --animations game-assets\animations\default --character-attack game-assets\characters\male_v2.fbx
+    ./scripts/sheet_preview.py --character game-assets/characters/male.fbx --name male \
+      --animations game-assets/animations/default --character-attack game-assets/characters/male_v2.fbx
 """
 import argparse, glob, json, os, subprocess, sys, shutil, time
 
 # Force stdout/stderr to UTF-8 so unicode output does not die with UnicodeEncodeError on
-# Windows consoles (cp1252/cp949).
+# Windows consoles (cp1252/cp949). Harmless no-op on macOS (already UTF-8).
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8")
     except (AttributeError, ValueError):
         pass
+
+# Platform switch — macOS ('darwin') vs Windows ('win32'). Used only for Blender/Python resolution;
+# all preview logic is platform-agnostic.
+IS_WINDOWS = sys.platform.startswith("win")
+IS_MACOS = sys.platform == "darwin"
 
 
 def _fmt_dur(seconds):
@@ -85,12 +100,12 @@ def _fmt_dur(seconds):
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# Preview defaults — the three axes that differ from production sheet-win.py.
+# Preview defaults — the three axes that differ from the production sheet.
 PREVIEW_DIRECTIONS = 4            # (1) fixed at 4 directions (N/E/S/W cardinals)
 PREVIEW_FRAMES_PER_ACTION = 3     # (2) fixed at 3 frames per action (when omitted)
 PREVIEW_CELL_DEFAULT = "384"      # (3) bigger cell (image) — 384 vs. the production render cell
 DEFAULT_ACTIONS = ["idle", "walk", "attack", "hit", "death", "run"]   # col order
-# Suggested per-action generation scale (matches sheet.py / sheet-win.py SCALE_PROMPT_DEFAULTS).
+# Suggested per-action generation scale (matches sheet.py SCALE_PROMPT_DEFAULTS).
 # Only applied when the matching --scale-<action> is passed — the preview never *prompts* for it
 # (it is a non-interactive eyeball tool). Passing --scale-attack 0.8 lets the preview reflect the
 # same framing production will bake, so what you eyeball matches the real atlas. <1 shrinks the
@@ -108,17 +123,21 @@ _BUILD_DST  = os.path.join(HERE, "_sheet_preview_build.py")
 
 EXAMPLES = r"""
 4-direction preview — quick check (NOT production · human eyeballing):
-  NOTE: new runtime sprites use sheet-win.py at 16 dir / 160 cell. This script is *preview only*.
+  NOTE: new runtime sprites use sheet.py at 16 dir / 128 cell. This script is *preview only*.
   4 dir(N/E/S/W) x 3 frame x 6 action = 18 col x 4 row. Default 384px -> 6912x1536.
-  Output -> outputs\<name>_preview\<name>.png (does NOT pollute production assets/)
+  Output -> outputs/<name>_preview/<name>.png (does NOT pollute production assets/)
 
-  # * Mixamo-rig character FBX + Mixamo animation folder
-  py scripts\sheet-preview-win.py --character game-assets\characters\male.fbx --name male `
+  # macOS — Mixamo-rig character FBX + Mixamo animation folder
+  ./scripts/sheet_preview.py --character game-assets/characters/male.fbx --name male \
+    --animations game-assets/animations/default
+
+  # Windows PowerShell — same
+  py scripts\sheet_preview.py --character game-assets\characters\male.fbx --name male `
     --animations game-assets\animations\default
 
-  # * Bigger cell (512) — with 18 cols that's 9216 > 8192, so reduce actions via --actions or keep 384
-  py scripts\sheet-preview-win.py --character game-assets\monsters\demonic_king.fbx `
-    --name demonic_king --animations game-assets\animations\default --shading texture --actions idle,walk,attack --size 512
+  # Bigger cell (512) — with 18 cols that's 9216 > 8192, so reduce actions via --actions or keep 384
+  ./scripts/sheet_preview.py --character game-assets/monsters/demonic_king.fbx \
+    --name demonic_king --animations game-assets/animations/default --shading texture --actions idle,walk,attack --size 512
 """
 
 
@@ -176,9 +195,9 @@ def _ensure_preview_helpers():
 
 
 _PREVIEW_BANNER = (
-    "# AUTO-GENERATED by sheet-preview-win.py — DO NOT EDIT.\n"
+    "# AUTO-GENERATED by sheet_preview.py — DO NOT EDIT.\n"
     "# This is a copy of production _sheet_render.py / _sheet_build.py + a 4-direction(preview) patch,\n"
-    "# regenerated from the originals on every sheet-preview-win.py run (the originals are the SSOT). Edit the originals.\n"
+    "# regenerated from the originals on every sheet_preview.py run (the originals are the SSOT). Edit the originals.\n"
 )
 
 
@@ -195,8 +214,13 @@ def _write_if_changed(path, content):
         f.write(content)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  Blender resolution — macOS + Windows.
+# ─────────────────────────────────────────────────────────────────────────────
 def _blender_from_registry():
-    """Read the Blender install path from the Windows registry Uninstall keys and return blender.exe."""
+    """Read the Blender install path from the Windows registry Uninstall keys and return blender.exe.
+
+    Windows-only (winreg import). Returns None on macOS / when not found."""
     try:
         import winreg
     except ImportError:
@@ -243,8 +267,19 @@ def _blender_from_registry():
     return None
 
 
-def find_blender(explicit):
-    """Find blender.exe in standard Windows install locations + PATH (same as sheet-win.py)."""
+def _find_blender_macos(explicit):
+    """Find Blender on macOS — /Applications/Blender.app + PATH (same as sheet.py)."""
+    cands = [explicit or None,
+             "/Applications/Blender.app/Contents/MacOS/Blender",
+             shutil.which("blender")]
+    for p in cands:
+        if p and os.path.exists(p):
+            return p
+    return None
+
+
+def _find_blender_windows(explicit):
+    """Find blender.exe in standard Windows install locations + PATH + registry (same as sheet-win.py)."""
     for p in (explicit or None, shutil.which("blender"), shutil.which("blender.exe")):
         if p and os.path.isfile(p):
             return p
@@ -275,29 +310,59 @@ def find_blender(explicit):
     found = sorted({os.path.abspath(f) for f in found if os.path.isfile(f)})
     if found:
         return found[-1]
+    return None
+
+
+def find_blender(explicit):
+    """Find Blender for the current platform (macOS: Blender.app · Windows: registry + install dirs)."""
+    if IS_WINDOWS:
+        exe = _find_blender_windows(explicit)
+        if exe:
+            return exe
+        sys.exit(
+            "Could not find Blender (blender.exe).\n"
+            "   -> Install Blender or pass the blender.exe path directly via --blender.\n"
+            '     e.g. --blender "C:\\Program Files\\Blender Foundation\\Blender 4.2\\blender.exe"\n'
+            "   Install: https://www.blender.org/download/  (or winget install BlenderFoundation.Blender)"
+        )
+    # macOS (and any other POSIX) path.
+    exe = _find_blender_macos(explicit)
+    if exe:
+        return exe
     sys.exit(
-        "Could not find Blender (blender.exe).\n"
-        "   -> Install Blender or pass the blender.exe path directly via --blender.\n"
-        '     e.g. --blender "C:\\Program Files\\Blender Foundation\\Blender 4.2\\blender.exe"\n'
-        "   Install: https://www.blender.org/download/  (or winget install BlenderFoundation.Blender)"
-    )
+        "Could not find Blender.\n"
+        "   -> Install Blender.app or pass the Blender path directly via --blender.\n"
+        "     e.g. --blender /Applications/Blender.app/Contents/MacOS/Blender\n"
+        "   Install: https://www.blender.org/download/")
 
 
 def resolve_python(explicit):
-    """Resolve the Python interpreter for the build step (_sheet_preview_build.py) (same as sheet-win.py)."""
+    """Resolve the Python interpreter for the build step (_sheet_preview_build.py).
+
+    macOS prefers python3; Windows prefers python / py. Falls back to the current interpreter.
+    (Only used when 'uv' is not available.)"""
     if explicit:
         return [explicit]
+    if IS_WINDOWS:
+        py = shutil.which("python")
+        if py:
+            return [py]
+        pyl = shutil.which("py")
+        if pyl:
+            return [pyl, "-3"]
+        return [sys.executable]
+    # macOS / POSIX — python3 first.
+    py3 = shutil.which("python3")
+    if py3:
+        return [py3]
     py = shutil.which("python")
     if py:
         return [py]
-    pyl = shutil.which("py")
-    if pyl:
-        return [pyl, "-3"]
     return [sys.executable]
 
 
 def assert_mixamo_rig(path, role):
-    """Verify the model file is a Mixamo rig (exit otherwise) — same as sheet-win.py."""
+    """Verify the model file is a Mixamo rig (exit otherwise) — same as the production sheet."""
     try:
         with open(path, "rb") as f:
             blob = f.read()
@@ -306,7 +371,7 @@ def assert_mixamo_rig(path, role):
     if b"mixamorig" not in blob:
         sys.exit(
             f"ERROR: {role} is not a Mixamo rig (bone name 'mixamorig:' not found): {path}\n"
-            f"   -> sheet.py only supports a *Mixamo-rig character + Mixamo animations*.\n"
+            f"   -> sheet_preview.py only supports a *Mixamo-rig character + Mixamo animations*.\n"
             f"   -> Auto-Rig the model (or download animations) at https://www.mixamo.com and export as FBX.")
 
 
@@ -346,7 +411,7 @@ def parse_size(s):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="[Windows] FBX/GLB -> **4-direction 3-frame PREVIEW** sprite sheet (big 384 cell · human-check only)",
+        description="FBX/GLB -> **4-direction 3-frame PREVIEW** sprite sheet (big 384 cell · human-check only · macOS+Windows)",
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         add_help=True)
@@ -377,11 +442,11 @@ def main():
     ap.add_argument("--attack", type=int, help=f"attack frame count (defaults to {PREVIEW_FRAMES_PER_ACTION})")
     ap.add_argument("--hit", type=int, help=f"hit frame count (defaults to {PREVIEW_FRAMES_PER_ACTION})")
     ap.add_argument("--death", type=int, help=f"death frame count (defaults to {PREVIEW_FRAMES_PER_ACTION})")
-    # Per-action generation scale — same as sheet.py / sheet-win.py. <1 shrinks that action's model
-    # inside the cell so the preview matches the framing production will bake (e.g. --scale-attack 0.8
-    # so a swung weapon fits). Unset actions fall back to the global --scale (no change). Unlike the
-    # production script, the preview never *prompts* for these (it is non-interactive) — pass them to
-    # mirror the exact scales you will use in the real atlas build.
+    # Per-action generation scale — same as sheet.py. <1 shrinks that action's model inside the cell so
+    # the preview matches the framing production will bake (e.g. --scale-attack 0.8 so a swung weapon
+    # fits). Unset actions fall back to the global --scale (no change). Unlike the production script,
+    # the preview never *prompts* for these (it is non-interactive) — pass them to mirror the exact
+    # scales you will use in the real atlas build.
     for _act in DEFAULT_ACTIONS:
         _pd = SCALE_PROMPT_DEFAULTS.get(_act)
         ap.add_argument(f"--scale-{_act}", type=float, default=None, dest=f"scale_{_act}",
@@ -399,14 +464,14 @@ def main():
                     help="Overall model (character+weapon) size factor inside the cell (default 1.0=no change). "
                          ">1 bigger · <1 smaller. Shrink (e.g. 0.9) if the model/weapon/anim is too big for the "
                          "cell, enlarge (e.g. 1.1) if too small. Unlike margin (padding), this is an intentional "
-                         "scale-up/down (same as sheet-win.py --scale).")
+                         "scale-up/down (same as sheet.py --scale).")
     ap.add_argument("--elev", type=float, default=30.0, help="Camera elevation (2:1=30 deg)")
     ap.add_argument("--shading", choices=["eevee", "texture"], default="eevee",
-                    help="Render shading. eevee=PBR 3-point lighting (default, same as sheet-win.py) · "
+                    help="Render shading. eevee=PBR 3-point lighting (default, same as sheet.py) · "
                          "texture=WORKBENCH TEXTURE (avoids rendering metal black).")
     ap.add_argument("--vivid", type=int, default=5, choices=range(1, 10), metavar="1-9",
                     help="Color intensity (contrast) + brightness strength (1-9, default 5, same as "
-                         "sheet-win.py). 5=moderately bright/vivid, 9=max, 1=no boost. Applied via "
+                         "sheet.py). 5=moderately bright/vivid, 9=max, 1=no boost. Applied via "
                          "compositor after render so previews match production coloring.")
     ap.add_argument("--render-res", type=int, default=0,
                     help="Render resolution (default max(256, size*2)). Takes precedence when set.")
@@ -434,9 +499,11 @@ def main():
                     help="Override sprite sheet PNG output folder (preview default outputs/<name>_preview)")
     ap.add_argument("--info-out", default=None,
                     help="Override manifest/layout output folder (preview default outputs/<name>_preview)")
-    ap.add_argument("--blender", default="", help="blender.exe path (auto-detected from standard Windows locations if omitted)")
+    ap.add_argument("--blender", default="",
+                    help="Blender path (auto-detected — macOS: /Applications/Blender.app · "
+                         "Windows: registry + standard install locations — if omitted)")
     ap.add_argument("--python", default="", dest="python_bin",
-                    help="(win only) Build-step Python interpreter path (auto-detects python/py by default)")
+                    help="Build-step Python interpreter path (auto-detects python3 on macOS · python/py on Windows)")
     ap.add_argument("--render-only", action="store_true")
     ap.add_argument("--build-only", action="store_true")
     ap.add_argument("--verbose", action="store_true", help="Print full Blender/uv logs (for debugging)")
@@ -553,7 +620,7 @@ def main():
         if v is not None:
             frames[a] = v
 
-    # Per-action generation scale — same contract as sheet.py / sheet-win.py. The render helper
+    # Per-action generation scale — same contract as sheet.py. The render helper
     # (_sheet_render.py -> _sheet_preview_render.py) reads cfg["action_scales"] and uses
     # ACTION_SCALES.get(action, global scale) per action, so an unset action falls back to --scale.
     action_scales = {}
@@ -639,7 +706,10 @@ def main():
     total_cols = sum(frames.get(a, PREVIEW_FRAMES_PER_ACTION) for a in actions)
     sheet_w, sheet_h = total_cols * cell, directions * cell
     over = sheet_w > TEXTURE_LIMIT or sheet_h > TEXTURE_LIMIT
+    sheet_png = os.path.join(sheet_out_dir, name + ".png")
+    manifest_png = os.path.join(info_out_dir, name + "_manifest.json")
     print("=" * 64)
+    print(f"  platform   : {'Windows' if IS_WINDOWS else ('macOS' if IS_MACOS else sys.platform)}")
     print(f"  PREVIEW mode — 4 directions (N/E/S/W) · 3 frames per action · big {cell}px cell")
     print(f"  actor      : {args.character}  (format {char_ext}, name={args.name})")
     _overrides = [(a, action_character[a]) for a in actions
@@ -651,8 +721,8 @@ def main():
         _rh = f" ref_h={weapon_ref_height}(height-relative)" if weapon_ref_height else " (no size correction)"
         print(f"  weapon     : {args.weapon} -> {weapon_bone}  "
               f"loc={weapon_loc} rot={weapon_rot} scale={weapon_scale}{_rh}")
-    print(f"  sheet out  : {sheet_out_dir}\\{name}.png  (preview — NOT production assets/)")
-    print(f"  info out   : {info_out_dir}\\{name}_manifest.json · _layout.md")
+    print(f"  sheet out  : {sheet_png}  (preview — NOT production assets/)")
+    print(f"  info out   : {manifest_png} · {name}_layout.md")
     print(f"  cell size  : {cell} x {cell} px   K(target body height)={args.k:.0f}px -> display=K/body_ratio")
     print(f"  shading    : {args.shading}" + ("  (PBR 3-point lighting)" if args.shading == "eevee" else "  (WORKBENCH TEXTURE)")
           + f"   vivid={args.vivid}/9 (contrast+brightness boost)")
