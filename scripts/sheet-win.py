@@ -885,7 +885,7 @@ def verify_cells_and_report(frames_dir, python_bin):
     return rec
 
 
-def align_frames_feet(frames_dir, python_bin, foot_frac=0.85):
+def align_frames_feet(frames_dir, python_bin, foot_frac=0.85, only_actions=None):
     """TexturePacker 前, 낱장 frame 의 발(불투명 bbox 하단)을 캔버스 foot_frac*H 로 수직 정렬.
 
     🛑 왜 필요: atlas 렌더(_sheet_render.py)는 카메라가 몸 *중심* 을 겨냥하고 행동마다
@@ -894,11 +894,17 @@ def align_frames_feet(frames_dir, python_bin, foot_frac=0.85):
     이라, 프레임 안 발이 0.85 에 있어야 발이 땅에 붙는다. grid 경로(_sheet_build.py)는 이 정렬을
     하지만 atlas 경로는 안 거쳐 "발이 공중에 뜨는" 현상이 생겼다 — 그래서 여기서 동일 정렬을 한다.
 
+    🛑 only_actions(부분 재렌더): 주어지면 그 행동의 낱장만 정렬한다. align_feet 는 idempotent
+    가 아니라 이미 정렬된 프레임을 재정렬하면 이중 정렬로 하단이 잘리므로, auto-fit 이 *새로 구운
+    행동만* 재렌더할 때 그 행동만 정렬해 보존된 행동의 이전 정렬을 유지해야 한다.
+
     scripts/align_feet.py 를 호출(pillow 필요 → uv 로 격리 실행; uv 없으면 win Python)."""
     script = os.path.join(HERE, "align_feet.py")
     uv = shutil.which("uv")
-    cmd = ([uv, "run", "--with", "pillow", "python", script, frames_dir, str(foot_frac)]
-           if uv else python_bin + [script, frames_dir, str(foot_frac)])
+    _only = ",".join(only_actions) if only_actions else ""
+    base = [script, frames_dir, str(foot_frac)] + ([_only] if _only else [])
+    cmd = ([uv, "run", "--with", "pillow", "python"] + base
+           if uv else python_bin + base)
     o = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if o.returncode != 0:
         print("  ⚠️ 낱장 발 정렬 실패 — 정렬 없이 진행(발이 뜰 수 있음):\n     "
@@ -1489,13 +1495,24 @@ def main():
         # auto-fit-scale: cell 잘림을 발견하면 scale 을 낮춰 재렌더(최대 6회 수렴 — step 하강으로
         # 0.6 하한까지 도달 가능). 미지정이면 1회 렌더.
         _max_fit = 6 if args.auto_fit_scale else 0
+        # 🚀 부분 재렌더 최적화: 잘린 행동만 다시 굽는다. pass 0 은 전체(_render_only=None),
+        # pass 1+ 은 직전 검사에서 scale 을 낮춘 행동 집합만(_render_only) 재렌더한다. 이렇게 하면
+        # attack 만 잘렸을 때 idle/walk/hit/death/run 을 매 pass 다시 굽는 낭비가 사라진다.
+        _render_only = None
         for _fit in range(_max_fit + 1):
+            # 이번 pass 가 실제 렌더하는 프레임 수(진행률·마커 누락 판정용). 전체=total_frames,
+            # 부분=재렌더 대상 행동의 프레임 합. 부분이어도 디스크 파일 총합은 total_frames 로 유지된다.
+            _pass_frames = (total_frames if not _render_only else
+                            directions * sum(frames.get(a, 8) for a in _render_only))
             if _fit == 0:
                 print(f"\n[1] Blender 렌더 중 … (총 {total_frames}장 = {directions}방향 × {sum(frames.get(a, 8) for a in actions)}프레임)")
             else:
                 cfg["action_scales"] = action_scales  # auto-fit 으로 낮춘 scale 반영
+                cfg["only_actions"] = list(_render_only) if _render_only else None  # 부분 재렌더 화이트리스트
                 json.dump(cfg, open(cfg_path, "w"), indent=2)
-                print(f"\n[1·auto-fit {_fit}/{_max_fit}] 조정된 scale 로 재렌더 중 …")
+                _scope = (f"잘린 행동만: {', '.join(_render_only)} ({_pass_frames}장)"
+                          if _render_only else "전체")
+                print(f"\n[1·auto-fit {_fit}/{_max_fit}] 조정된 scale 로 재렌더 중 … {_scope}")
             t_r0 = time.monotonic()
             # encoding/errors 명시 — Windows 기본(cp1252/cp949)으로 Blender stdout 을 디코드하면
             # 0x81 등 비매핑 바이트에서 UnicodeDecodeError 로 죽는다. UTF-8 + replace 로 강제.
@@ -1519,13 +1536,17 @@ def main():
                     print("   " + line[4:])
                 elif line.startswith("Saved:"):
                     saved += 1
-                    if saved % 24 == 0 or saved == total_frames:
+                    # 진행률 분모는 *이번 pass* 프레임 수(_pass_frames) — 부분 재렌더면 재렌더 대상만.
+                    # Saved 는 최종 렌더 + _foot 마스크 렌더 둘 다 카운트되므로 _pass_frames 를 넘을 수
+                    # 있다(마스크 저해상). 표시는 min 으로 클램프해 "120%" 같은 오표시를 막는다.
+                    if saved % 24 == 0 or saved >= _pass_frames:
                         el = time.monotonic() - t_r0
                         fps = saved / el if el > 0 else 0
-                        eta = (total_frames - saved) / fps if fps > 0 else 0
-                        pct = int(saved / total_frames * 100) if total_frames else 0
+                        _shown = min(saved, _pass_frames)
+                        eta = max(0, (_pass_frames - _shown)) / fps if fps > 0 else 0
+                        pct = int(_shown / _pass_frames * 100) if _pass_frames else 0
                         tail = f" · {cur_action}" if cur_action else ""
-                        print(f"   … {saved}/{total_frames} ({pct}%) · {fps:.1f}장/s · ETA {_fmt_dur(eta)}{tail}",
+                        print(f"   … {_shown}/{_pass_frames} ({pct}%) · {fps:.1f}장/s · ETA {_fmt_dur(eta)}{tail}",
                               flush=True)
                 elif any(k in line for k in ("Error", "Traceback", "Exception", "Failed")):
                     errs.append(line)
@@ -1547,8 +1568,9 @@ def main():
             # 칼끝/무기 끝이 새로 잘릴 수 있으므로(과거엔 검사가 정렬 *전*), verify_cells 가 *정렬 후*
             # 프레임을 봐야 최종 atlas 의 실제 잘림을 잡는다. 🛑 align 은 idempotent 가 *아니라* 원본
             # _foot 마스크 기준으로 매번 shift 하므로(이중 정렬 시 하단 잘림) *정렬 안 된 새 프레임에만
-            # 1회* 적용한다 — auto-fit 재렌더는 매번 새로 굽는 프레임이라 안전(같은 프레임 재정렬 아님).
-            align_frames_feet(frames_dir, python_bin)
+            # 1회* 적용한다. 부분 재렌더(_render_only)면 *새로 구운 그 행동만* 정렬해 보존된 행동의
+            # 이전 정렬을 그대로 둔다(전체 재정렬 시 보존 행동이 이중 정렬돼 하단 잘림 회귀).
+            align_frames_feet(frames_dir, python_bin, only_actions=_render_only)
             # ── cell 잘림 검사(--verify-cells) + auto-fit 재렌더 판단 ──
             if not args.verify_cells:
                 break
@@ -1569,6 +1591,7 @@ def main():
             # 잔여 잘림이 남아도 "권장 > 현재"라 안 낮춰 조기 정지한다(bone run/attack top 잘림 회귀).
             # → min(권장, 현재-step) 으로 *여전히 잘리면 최소 step 만큼 더 낮춰* 잘림 0 까지 수렴시킨다.
             _changed = False
+            _next_only = []   # 이번에 scale 을 낮춰 *다음 pass 에 재렌더할* 행동 집합
             for _a, _s in _rec.items():
                 _cur = float(action_scales.get(_a, args.scale))
                 _target = max(0.6, round(min(_s, _cur - AUTOFIT_STEP), 2))  # 0.6 하한
@@ -1576,9 +1599,12 @@ def main():
                     action_scales[_a] = _target
                     print(f"   ↻ auto-fit: --scale-{_a} {_cur:g}→{_target:g}")
                     _changed = True
+                    _next_only.append(_a)
             if not _changed:
                 print("   ⚠️ 더 줄일 수 없음(0.6 하한 도달) — 잔여 잘림은 셀/카메라·margin 조정 필요")
                 break
+            # 다음 pass 는 scale 이 바뀐 행동만 재렌더(부분 재렌더). ACTIONS 순서를 유지한다.
+            _render_only = [a for a in actions if a in set(_next_only)]
 
     if args.render_only:
         print("\n(--render-only) 낱장:", frames_dir, "\n완료.")

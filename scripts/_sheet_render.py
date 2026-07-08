@@ -42,6 +42,13 @@ ANIM_DIR       = cfg.get("animations_dir")           # None → 캐릭터 파일
 USE_EMBEDDED   = bool(cfg.get("use_embedded_anim", ANIM_DIR is None))
 FRAMES         = cfg["frames"]                       # {"idle":8, ...}
 ACTIONS        = cfg["actions"]                      # ["idle","walk","attack","hit","death","run"]
+# ONLY_ACTIONS(선택): auto-fit 재렌더 시 *잘린 행동만* 다시 굽기 위한 부분 렌더 화이트리스트.
+# None(기본) → ACTIONS 전체 렌더(+ 낱장 폴더 전체 wipe). 리스트가 주어지면(예 ["attack"]) 그
+# 행동들의 낱장·_foot 마스크만 지우고 그 행동만 재렌더한다 → 정상적으로 구워진 다른 행동(idle/walk
+# 등)의 낱장은 *보존* 되어 불필요한 재렌더가 사라진다(sheet.py/sheet-win.py auto-fit 최적화).
+# 🛑 framing(ortho_base)은 행동과 무관하게 몸 bbox 에서 한 번 계산되므로, 부분 재렌더해도 남은
+# 행동과 셀 크기가 정합한다(재렌더 attack 프레임이 보존된 idle 프레임과 같은 크기 기준).
+ONLY_ACTIONS   = cfg.get("only_actions")             # None=전체 · 리스트=그 행동만 재렌더
 LOOP           = set(cfg.get("loop_actions", ["idle", "walk", "run"]))
 OUT_FRAMES     = cfg["frames_dir"]
 RENDER_RES     = int(cfg["render_res"])
@@ -95,15 +102,28 @@ HEAD_CANDIDATES = ["mixamorig:Head", "head", "Head", "Bip01_Head"]
 FOOT_KEYWORDS   = ["foot", "ankle", "toe", "ball"]   # 발 본 부분 매칭(좌우 모두 수집 → 최하단 사용)
 
 os.makedirs(OUT_FRAMES, exist_ok=True)
-# 이전 실행의 낱장 PNG 를 모두 제거(스테일 프레임 오염 방지). 프레임 수가 바뀌거나
-# (예: --attack 12 → 4) 다른 캐릭터/클립으로 재실행하면 옛 {action}_{DIR}_{idx}.png 가
-# 남아 빌드 시 섞여 들어가 "공격인데 서 있는/누운 포즈" 같은 회귀를 일으킨다.
-for _f in os.listdir(OUT_FRAMES):
-    if _f.endswith(".png"):
+# 이전 실행의 낱장 PNG 를 제거(스테일 프레임 오염 방지). 프레임 수가 바뀌거나 (예: --attack
+# 12 → 4) 다른 캐릭터/클립으로 재실행하면 옛 {action}_{DIR}_{idx}.png 가 남아 빌드 시 섞여
+# 들어가 "공격인데 서 있는/누운 포즈" 같은 회귀를 일으키기 때문이다.
+#   · 전체 렌더(ONLY_ACTIONS=None) → 모든 낱장 wipe.
+#   · 부분 재렌더(ONLY_ACTIONS=[...]) → 그 행동의 낱장·_foot 마스크만 wipe(나머지 보존).
+#     파일명 규약 `{action}_{DIR}_{idx}.png` 의 prefix `{action}_` 로 선별 삭제한다.
+def _wipe_pngs(_dir, only=None):
+    if not os.path.isdir(_dir):
+        return
+    prefixes = tuple(f"{a}_" for a in only) if only else None
+    for _f in os.listdir(_dir):
+        if not _f.endswith(".png"):
+            continue
+        if prefixes and not _f.startswith(prefixes):
+            continue                                 # 보존 대상(재렌더 안 하는 행동)
         try:
-            os.remove(os.path.join(OUT_FRAMES, _f))
+            os.remove(os.path.join(_dir, _f))
         except OSError:
             pass
+
+_wipe_pngs(OUT_FRAMES, ONLY_ACTIONS)
+_wipe_pngs(os.path.join(OUT_FRAMES, "_foot"), ONLY_ACTIONS)   # 발 마스크도 같은 범위로 정리
 bpy.ops.wm.read_factory_settings(use_empty=True)
 
 # ── import 헬퍼: 확장자로 FBX / glTF(GLB) 자동 분기 ──────────────────
@@ -794,13 +814,10 @@ _weapon_objs = [o for o in meshes if o.name not in set(m.name for m in body)]
 # 발 측정용 마스크(검 제외 캐릭터 실루엣) 저장 폴더. align_feet 가 이 폴더의 bbox 하단(=발바닥)을
 # 읽어 세로 정렬한다. Render Result.pixels 는 headless 에서 비어 신뢰 불가 → 파일로 저장해 PIL 이 읽음.
 FOOT_MASK_DIR = os.path.join(OUT_FRAMES, "_foot")
-try:
-    os.makedirs(FOOT_MASK_DIR, exist_ok=True)
-    for _f in os.listdir(FOOT_MASK_DIR):
-        if _f.endswith(".png"):
-            os.remove(os.path.join(FOOT_MASK_DIR, _f))
-except OSError:
-    pass
+# 🛑 스테일 _foot 마스크 정리는 파일 상단 _wipe_pngs(ONLY_ACTIONS) 가 이미 *범위에 맞게*
+# 수행한다(전체 렌더=전부 wipe · 부분 재렌더=그 행동만 wipe). 여기서 무조건 전부 지우면 부분
+# 재렌더 시 보존해야 할 다른 행동의 마스크까지 삭제돼 align_feet 발 정렬이 틀어진다 → 폴더 생성만.
+os.makedirs(FOOT_MASK_DIR, exist_ok=True)
 
 
 def _render_foot_mask(fname):
@@ -832,8 +849,14 @@ def _render_foot_mask(fname):
         (r.resolution_x, r.resolution_y,
          r.resolution_percentage, r.filepath, r.engine) = ox, oy, opct, ofp, oeng
 
+# 렌더 대상 행동 — ONLY_ACTIONS 가 주어지면 그 부분집합만(auto-fit 부분 재렌더), 아니면 전체.
+# 순서는 ACTIONS 를 유지(로그·진행률 일관). ONLY_ACTIONS 에 없는 행동은 이미 구워진 낱장을
+# 그대로 두고 건드리지 않는다(위 _wipe_pngs 가 그 행동만 지웠으므로 보존됨).
+_render_actions = ([a for a in ACTIONS if a in set(ONLY_ACTIONS)] if ONLY_ACTIONS else list(ACTIONS))
+if ONLY_ACTIONS:
+    print(f"####PARTIAL 부분 재렌더 — 대상 행동만: {_render_actions} (나머지 보존)")
 total = 0
-for name in ACTIONS:
+for name in _render_actions:
     a = bind(name)
     n = int(FRAMES.get(name, 8))
     # 행동별 scale: scale<1 → ortho 를 base/scale 로 키워 모델 작게(run/attack 무기 여유),
