@@ -859,13 +859,22 @@ total = 0
 for name in _render_actions:
     a = bind(name)
     n = int(FRAMES.get(name, 8))
-    # 행동별 scale: scale<1 → ortho 를 base/scale 로 키워 모델 작게(run/attack 무기 여유),
-    # scale>1 → 크게. base(ortho)=몸 bbox×margin. 화면 몸 크기 유지는 dart config 가 담당.
+    # 행동별 scale. 🛑 셀(캔버스) 확대 방식(2026-07-09): scale<1 은 *모델을 작게 굽는 게 아니라*
+    # 셀(orig)을 1/scale 배로 키워 무기 끝을 담는다 — body 는 원본 픽셀 밀도로 유지돼 화질 손실이 0.
+    #  · ortho_scale = ortho/scale (카메라가 1/scale 넓게 담아 칼끝 포함, 기존과 동일)
+    #  · resolution  = RENDER_RES/scale (해상도도 1/scale 로 키움 → 픽셀 밀도 resolution/ortho_scale
+    #                  = RENDER_RES/ortho 로 *모든 행동 동일*. body 는 idle 과 같은 픽셀 수로 선명)
+    # → orig 이 자동으로 base_cell/scale(예 128/0.8=160)로 커지고, 런타임(actor_animation_set.dart)이
+    #   .atlas `laryen.actionScale.<action>`(=scale) 메타로 size=128/scale 표시 → 화면 스케일
+    #   size/orig=1:1(선명) + body 화면 크기는 행동 무관 동일(발 anchor 0.85 정합). scale>1(모델 확대)
+    #   은 셀 축소가 아니므로 해상도를 키우지 않고 기존 동작(RENDER_RES 고정) 유지.
     _sc = _ascale(name)
     cam.data.ortho_scale = ortho / _sc
+    _res = round(RENDER_RES / _sc) if _sc < 1.0 else RENDER_RES  # scale<1 → 셀 확대(해상도 키움)
+    r.resolution_x = r.resolution_y = _res
     if abs(_sc - 1.0) > 1e-6:
-        print(f"####ASCALE {name} scale={_sc:g} → ortho={cam.data.ortho_scale:.3f} "
-              f"(모델 {'작게' if _sc < 1 else '크게'} · 화면 보정 권장 ×{1.0/_sc:.3f} → dart config)")
+        print(f"####ASCALE {name} scale={_sc:g} → ortho={cam.data.ortho_scale:.3f} res={_res} "
+              f"({'셀 확대' if _sc < 1 else '모델 확대'} ×{1.0/_sc:.3f} · 런타임 보정 → atlas 메타)")
     if a:
         frames = sample_frames(a, n, name in LOOP)
     else:

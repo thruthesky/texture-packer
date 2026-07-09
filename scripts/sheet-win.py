@@ -173,6 +173,11 @@ SCALE_PROMPT_DEFAULTS = {"idle": 1.0, "walk": 0.9, "run": 0.9, "attack": 0.8, "h
 # --auto-fit-scale 재렌더 시, 권장값이 현재보다 높아도(잘림이 줄어도) 잔여 잘림이면 최소 이만큼
 # 더 낮춰 잘림 0 까지 수렴시킨다(bone 처럼 top 잘림이 커서 1회 권장으로 안 되는 자산 대응).
 AUTOFIT_STEP = 0.06
+# 🛑 셀 확대 방식(2026-07-09)의 scale 하한 = 셀 확대 상한(sheet.py 와 동일 SSOT). scale=1/셀배율
+# 이므로 0.667 → 셀 최대 1.5배(128→192). scale<1 은 body 를 줄이는 게 아니라 셀(캔버스)을 1/scale 로
+# 키워 무기 끝을 담는다(body 원본 픽셀·화질 유지 — _sheet_render.py 가 해상도를 RENDER_RES/scale 로
+# 확대·공유 헬퍼라 win 도 자동 적용). RAM(OOM) 통제 위해 잘리는 행동만·1.5배까지만 확대한다.
+SCALE_FLOOR = 0.667
 TEXTURE_LIMIT = 8192
 SUPPORTED_EXT = (".fbx", ".glb", ".gltf")
 CHAR_EXT = SUPPORTED_EXT + (".blend",)
@@ -613,16 +618,16 @@ def prompt_missing(args):
             setattr(args, f"scale_{act}", default)  # 비대화형: 기본 제안값 적용
             continue
         while True:
-            s = _ask(f"--scale-{act}? {act} model size (prevents weapon/motion clipping, 0.6~1.0, "
-                     f"<1 = bake smaller, runtime restores original size)", f"{default:g}")
+            s = _ask(f"--scale-{act}? {act} cell expansion (prevents weapon/motion clipping, 0.667~1.0, "
+                     f"<1 = enlarge cell by 1/scale to fit weapon, body keeps original resolution)", f"{default:g}")
             try:
                 v = float(s)
             except ValueError:
                 print("   Enter a number."); continue
-            if 0.6 <= v <= 1.0:
+            if SCALE_FLOOR <= v <= 1.0:
                 setattr(args, f"scale_{act}", v)
                 break
-            print("   Enter a value between 0.6 and 1.0.")
+            print(f"   Enter a value between {SCALE_FLOOR} and 1.0 (cell max 1.5x = 192).")
     # 7) mob run 애니 포함 여부 — 기본 제외(디스크 절감).
     #    우선순위: --run-animation(명시) > --run N/--actions(명시) > 대화형 질문 > 기본 제외.
     #    🛑 --run-animation 을 주면 대화형 질문을 *건너뛴다*(true/false 로 바로 결정).
@@ -1261,7 +1266,7 @@ def main():
                          "false` turns off only rotation and keeps the rest of the preset. Since auto-fit is enabled, --scale-<action> and "
                          "the global --scale are ignored and auto-decrease from 1.0.")
     ap.add_argument("--auto-fit-scale", dest="auto_fit_scale", action="store_true",
-                    help="When a clipped action is found, lower the scale and *auto re-render* (up to 6 iterations · 0.6 floor, converging "
+                    help="When a clipped action is found, lower the scale and *auto re-render* (up to 6 iterations · 0.667 floor = cell 1.5x/192, converging "
                          "to 0 clipping). Auto-adjusts without human intervention so that large motions/blade tips of pc/npc/mob fit within the cell. "
                          "🛑 When this option is enabled, --scale-<action> and the global --scale are *all ignored*, starting from 1.0 (original) "
                          "and decreasing only as much as auto-fit needs (the interactive scale prompt is also skipped).")
@@ -1672,14 +1677,14 @@ def main():
             _next_only = []   # 이번에 scale 을 낮춰 *다음 pass 에 재렌더할* 행동 집합
             for _a, _s in _rec.items():
                 _cur = float(action_scales.get(_a, args.scale))
-                _target = max(0.6, round(min(_s, _cur - AUTOFIT_STEP), 2))  # 0.6 하한
+                _target = max(SCALE_FLOOR, round(min(_s, _cur - AUTOFIT_STEP), 2))  # 0.667 하한=셀 1.5배(192)
                 if _target < _cur - 1e-6:
                     action_scales[_a] = _target
-                    print(f"   ↻ auto-fit: --scale-{_a} {_cur:g}->{_target:g}")
+                    print(f"   ↻ auto-fit: --scale-{_a} {_cur:g}->{_target:g} (cell x{1.0/_target:.3f}={round(128/_target)}px)")
                     _changed = True
                     _next_only.append(_a)
             if not _changed:
-                print("   ⚠️ cannot reduce further (hit 0.6 floor) — remaining clip needs cell/camera/margin tuning")
+                print("   ⚠️ hit cell 1.5x (192) limit — remaining clip needs weapon-model shrink / camera / margin tuning")
                 break
             # 다음 pass 는 scale 이 바뀐 행동만 재렌더(부분 재렌더). ACTIONS 순서를 유지한다.
             _render_only = [a for a in actions if a in set(_next_only)]

@@ -42,8 +42,11 @@ except ImportError:
 # 낱장 프레임 파일명: <action>_<DIR16>_<idx>.png (예 attack_ENE_04.png). _sheet_render.py 출력 규약.
 _FRAME_RE = re.compile(r"^(?P<action>[a-z]+)_(?P<dir>[A-Z]+)_(?P<idx>\d+)\.png$")
 
-# 행동별 생성 scale 을 낮출 때의 하한(sheet.py 대화형 검증 범위와 동일).
-SCALE_MIN = 0.6
+# 행동별 scale 하한 = 셀 확대 상한. 🛑 셀 확대 방식(2026-07-09): scale<1 은 body 를 줄이는 게
+# 아니라 셀(캔버스)을 1/scale 배로 키워 무기 끝을 담는다(body 는 원본 픽셀 밀도 유지 → 화질 손실
+# 0). scale=1/셀배율 이므로 0.667 → 셀 최대 1.5배(128→192)로 제한해 iOS OOM(atlas RAM)을 통제한다.
+# 0.667 하한에서도 잔여 잘림이면 무기 모델 축소/카메라·margin 조정이 필요하다.
+SCALE_MIN = 0.667
 
 
 def edge_opacity(img, margin, alpha_thresh):
