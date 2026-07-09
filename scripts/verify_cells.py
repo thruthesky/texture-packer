@@ -25,6 +25,14 @@ import os
 import re
 import sys
 
+# Windows 콘솔(cp1252/cp949)에서 →·✓·⚠️·❌ 등 유니코드 출력이 UnicodeEncodeError 로 죽지 않도록
+# stdout/stderr 를 UTF-8 로 강제한다(Python 3.7+). sheet-win.py 와 동일한 방어(win 포트 정합).
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
 try:
     import numpy as np
     from PIL import Image
@@ -94,6 +102,10 @@ def verify_frames(frames_dir, margin=2, alpha_thresh=8):
         rec = per_action.setdefault(action, {
             "frames": 0, "clipped": 0, "max_frac": 0.0, "worst": None,
             "edges": {"top": 0, "bottom": 0, "left": 0, "right": 0}, "cell": (ch, cw),
+            # worst_edges: 최악(가장 많이 잘린) 프레임이 *어느 변으로 얼마나* 잘렸는지({top:0.1,…}).
+            # 전 프레임 목록은 만들지 않는다 — 사용자 지시(2026-07-09): 프레임 전수 기록은 느리니
+            # '최악 프레임'만 기록하면 충분. worst(파일명)+worst_edges 한 쌍으로 clip.log·최종 요약을 낸다.
+            "worst_edges": {},
         })
         rec["frames"] += 1
         maxf = max(frac.values())
@@ -105,6 +117,8 @@ def verify_frames(frames_dir, margin=2, alpha_thresh=8):
             if maxf > rec["max_frac"]:
                 rec["max_frac"] = maxf
                 rec["worst"] = name
+                # 최악 프레임의 변별 잘림 비율만 기록(전수 목록 대신 — 가볍고 빠름).
+                rec["worst_edges"] = {e: round(fv, 4) for e, fv in frac.items() if fv > 0}
     # 권장 scale: 잘린 변의 최대 불투명 비율(max_frac)만큼 모델이 셀을 넘었다고 근사 → 여유 6% 더해
     #   축소. 정확한 잘린 폭은 프레임만으론 알 수 없으므로, 이 값으로 재생성→재검사를 반복해 수렴한다.
     for action, rec in per_action.items():
@@ -128,8 +142,11 @@ def print_report(per_action, source):
         any_clip = True
         bad_actions.append(action)
         edges = ", ".join(f"{e}×{n}" for e, n in rec["edges"].items() if n)
+        # 최악 프레임이 어느 변으로 잘렸는지(worst_edges) 한 줄로 — 전수 목록 대신 최악만(빠름).
+        we = ", ".join(f"{k}={v*100:.0f}%" for k, v in rec.get("worst_edges", {}).items())
         print(f"  ⚠️ {action:6} — {rec['clipped']}/{rec['frames']} 프레임 잘림 · "
-              f"테두리불투명 최대 {rec['max_frac'] * 100:.0f}% · 변[{edges}] · 최악 {rec['worst']}")
+              f"테두리불투명 최대 {rec['max_frac'] * 100:.0f}% · 변[{edges}]")
+        print(f"        · 최악 프레임: {rec['worst']}  ({rec['max_frac']*100:.0f}% [{we}])")
         print(f"        → 권장 --scale-{action} {rec['recommended_scale']} "
               f"(현재보다 작게 구우면 셀 안에 들어옴)")
     if ok_actions:
