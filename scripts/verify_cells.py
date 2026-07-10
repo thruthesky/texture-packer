@@ -193,7 +193,7 @@ def verify_atlas(atlas_path, as_json):
 
     packed .atlas 는 trim 후라 원본 clip 을 *직접 못 본다*. 여기서는 `size>=orig`(여백 0=셀을
     꽉 채움)를 clip '후보'로만 표시하는데, stripWhitespace off·여백 없는 *정상* 자산도 전부
-    후보로 찍힌다(실측: male_plate.atlas 1024 region 전부). 따라서 잘림 여부의 실제 판정은
+    후보로 찍힌다(실측: male_chrome.atlas 1024 region 전부). 따라서 잘림 여부의 실제 판정은
     렌더 직후 낱장 `--frames` 로만 하고, 이 `--atlas` 는 참고 정보로만 쓴다.
     🛑 exit code 는 *항상 0*(정보성) — 자동 흐름이 exit 2 를 '잘림'으로 오판하지 않게 한다."""
     try:

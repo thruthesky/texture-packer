@@ -87,7 +87,7 @@ def _save_png_ios_safe(im, path, compress_level=None):
 
     PIL `save(optimize=True)` 는 전체 이미지를 *단일 거대 IDAT 청크* + sRGB/pHYs 메타로
     써서, **iOS 26.5 시뮬레이터의 이미지 디코더가 로드에 실패** 한다(실측 2026-06-18:
-    male_immortal/male_plate 가 26.5 시뮬레이터에서만 base 외형으로 fallback — 26.4·실기기는
+    male_quantum/male_chrome 가 26.5 시뮬레이터에서만 base 외형으로 fallback — 26.4·실기기는
     정상). 기본 male.png 는 다중 IDAT 라 로드돼 immortal 만 안 보였다. 다중 IDAT(64KB 분할)
     + 메타 청크 제거로 저장하면 실기기·26.4·26.5 시뮬레이터 모두 정상 로드된다."""
     im.info = {}                             # sRGB/pHYs 등 메타 청크 제거

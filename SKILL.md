@@ -71,8 +71,8 @@ Flutter Flame(`flame_texturepacker`) 게임을 위해 캐릭터·몬스터·NPC 
 ```bash
 # PC — Mixamo rig FBX + 애니메이션 폴더(game-assets/animations/<variant>)
 python3 .claude/skills/texture-packer/scripts/sheet.py \
-  --kind pc --name male_victor \
-  --character game-assets/characters/male_victor.fbx --animations default \
+  --kind pc --name male_vector \
+  --character game-assets/characters/male_vector.fbx --animations default \
   --idle 8 --walk 12 --run 12 --attack 16 --hit 8 --death 8
 
 # 몬스터 — 장비 분리 없이 전체 모델 16방향
@@ -103,10 +103,10 @@ assets/<kind>/<name>/<name>.atlas    # flame_texturepacker 가 읽는 trim/rotat
 `--output <DIR>` 을 주면 `<DIR>/<kind>/<name>/` 을 **자동 생성**해 거기에 `.png`·`.atlas` 를 저장한다.
 
 ```bash
-# → ./viewer/assets/pc/male_victor/male_victor.{png,atlas}
+# → ./viewer/assets/pc/male_vector/male_vector.{png,atlas}
 python3 .claude/skills/texture-packer/scripts/sheet.py \
-  --kind pc --name male_victor \
-  --character game-assets/characters/male_victor.fbx --animations default \
+  --kind pc --name male_vector \
+  --character game-assets/characters/male_vector.fbx --animations default \
   --output ./viewer/assets
 ```
 
