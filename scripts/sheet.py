@@ -1627,6 +1627,21 @@ def main():
         print("\n[pubspec] 갱신 중 …")
         update_pubspec(rel_paths)
 
+    # ── [끝] cell 잘림(clip) 최종 요약 — 어떤 프레임이 clip 에 영향을 주는지(행동별 최악 1장) ──
+    # clip_frames_summary 는 마지막 검사 pass 의 상태다(auto-fit 재렌더로 잘림이 사라졌으면 비어 있음).
+    if args.verify_cells:
+        if clip_frames_summary:
+            print("\n[clip 요약] 셀 밖으로 잘린 프레임(행동별 최악 1장):")
+            for a in sorted(clip_frames_summary):
+                c = clip_frames_summary[a]
+                e = ", ".join(f"{k}={v*100:.0f}%" for k, v in c.get("edges", {}).items())
+                print(f"   ⚠️ {a:6} — {c.get('worst')}  ({c.get('frac', 0)*100:.0f}% [{e}]) · "
+                      f"{c.get('clipped', 0)}/{c.get('frames', 0)} 프레임 잘림 · "
+                      f"권장 --scale-{a} {c.get('recommended_scale')}")
+            print(f"   📄 상세 로그: {os.path.relpath(clip_log_path, ROOT)}")
+        else:
+            print("\n[clip 요약] ✅ 최종 프레임에 셀 밖 잘림 없음.")
+
     print(f"\n완료. (총 {_fmt_dur(time.monotonic() - t_all0)})")
 
 
