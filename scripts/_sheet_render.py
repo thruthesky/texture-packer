@@ -405,15 +405,26 @@ def import_action(path, name):
     # 애니 fbx 본 이름이 mixamorig1:Hips 인데 캐릭터는 mixamorig:Hips 라 교집합 0 → 정적·뒤집힘 렌더
     # 되던 회귀(ryen 실측). 본 이름 변경 시 그 armature 의 action fcurve data_path 도 Blender 가 자동
     # 갱신하므로, 정규화 후엔 캐릭터 rig 와 본이 일치해 '직접적용' 경로를 탄다.
+    # 애니 본 접두사를 *캐릭터 본 접두사* 에 맞춘다. 캐릭터 fbx 와 애니 fbx 의 mixamorig 접두사
+    # 숫자가 다르면(예: 캐릭터 mixamorig1:, 애니 mixamorig:) char_bones ∩ anim_bones = 0 →
+    # detect_rig 도 None → 정적 T-pose(pete/jackie 실측). 애니는 mesh 가 없어 본 이름을 캐릭터
+    # 쪽으로 바꿔도 안전하다(반대로 캐릭터 본을 바꾸면 mesh vertex group 이 깨진다).
     if src_arm:
+        char_prefix = None
+        for _b in arm.data.bones:
+            _m = re.match(r"^(mixamorig\d*):", _b.name)
+            if _m:
+                char_prefix = _m.group(1)
+                break
         _n = 0
-        for _b in src_arm.data.bones:
-            _nn = re.sub(r"^mixamorig\d+:", "mixamorig:", _b.name)
-            if _nn != _b.name:
-                _b.name = _nn
-                _n += 1
+        if char_prefix:
+            for _b in src_arm.data.bones:
+                _nn = re.sub(r"^mixamorig\d*:", char_prefix + ":", _b.name)
+                if _nn != _b.name:
+                    _b.name = _nn
+                    _n += 1
         if _n:
-            print(f"####INFO 애니 본 접두사 정규화 mixamorig<N>: → mixamorig: ({_n}본)")
+            print(f"####INFO 애니 본 접두사 정규화 → {char_prefix}: ({_n}본)")
     result = None
     if src_act and src_arm:
         char_bones = set(b.name for b in arm.data.bones)
