@@ -169,7 +169,9 @@ FRAME_OPTION_ACTIONS = ["idle", "walk", "run", "attack", "hit", "death", "look",
 # `laryen.actionScale.<action>` 메타에 기록하고, 게임 런타임(actor_animation_set.dart
 # parseDisplayScales)이 표시 배율 1/scale 로 *원래 크기 복원* 한다. look/talk/wave(npc)는 미포함
 # → 전역 --scale fallback(질문 안 함).
-SCALE_PROMPT_DEFAULTS = {"idle": 1.0, "walk": 0.9, "run": 0.9, "attack": 0.8, "hit": 0.9, "death": 1.0}
+# 🛑 기본 전부 1.0 (2026-07-09 셀 확대 전환): 셀 확대는 atlas RAM(iOS OOM)·page 폭(8192 한계)을
+# 키우므로 잘리지 않는 행동까지 무조건 키우지 않는다. 잘리는 행동만 --auto-fit-scale 이 검출해 낮춘다.
+SCALE_PROMPT_DEFAULTS = {"idle": 1.0, "walk": 1.0, "run": 1.0, "attack": 1.0, "hit": 1.0, "death": 1.0}
 # --auto-fit-scale 재렌더 시, 권장값이 현재보다 높아도(잘림이 줄어도) 잔여 잘림이면 최소 이만큼
 # 더 낮춰 잘림 0 까지 수렴시킨다(bone 처럼 top 잘림이 커서 1회 권장으로 안 되는 자산 대응).
 AUTOFIT_STEP = 0.06
@@ -648,7 +650,9 @@ def prompt_missing(args):
             args.rotation = str2bool(_ask(
                 f"Enable rotation packing (saves space)?{warn} [Y/n]", "Y"))
         else:
-            args.rotation = True  # 비대화형 기본 true (사용자 지시 2026-07-07 재변경)
+            # 🛑 actor(pc/mob/npc)는 rotate+useOriginalSize 가 발 위치를 어긋나게 하므로(셀 확대 가변
+            # orig 에서 위험 — 2026-07-09) 비대화형 기본 false. decor/tile 은 공간 절약 위해 true.
+            args.rotation = args.kind not in ("pc", "mob", "npc")
     # 9) 가로(X)/세로(Y) 여백 trim — 둘 다 기본 true. 미지정이면 대화형으로 물어봄(기본 Y).
     #    하위호환: --strip-whitespace/--keep-whitespace 는 x·y 를 동시 설정(개별 미지정 시).
     _both = getattr(args, "_strip_both", None)
@@ -1338,7 +1342,8 @@ def main():
         if args.kind == "mob" and args.run_animation is None:
             args.run_animation = False  # mob 은 run 애니 제외(디스크↓) — 대화형 질문(run 포함?)도 억제
         if args.rotation is None:
-            args.rotation = True
+            # actor(pc/mob/npc)는 rotate 발 어긋남 위험 → false, 그 외 true (비대화형 정책 동일)
+            args.rotation = args.kind not in ("pc", "mob", "npc")
         if args.strip_x_whitespaces is None:
             args.strip_x_whitespaces = True
         if args.strip_y_whitespaces is None:
@@ -1680,7 +1685,7 @@ def main():
                 _target = max(SCALE_FLOOR, round(min(_s, _cur - AUTOFIT_STEP), 2))  # 0.667 하한=셀 1.5배(192)
                 if _target < _cur - 1e-6:
                     action_scales[_a] = _target
-                    print(f"   ↻ auto-fit: --scale-{_a} {_cur:g}->{_target:g} (cell x{1.0/_target:.3f}={round(128/_target)}px)")
+                    print(f"   ↻ auto-fit: --scale-{_a} {_cur:g}->{_target:g} (cell x{1.0/_target:.3f}={round(cell/_target)}px)")
                     _changed = True
                     _next_only.append(_a)
             if not _changed:
