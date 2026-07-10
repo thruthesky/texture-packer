@@ -28,7 +28,7 @@ FBX/GLB(glTF) 캐릭터(메쉬+리그) → 16 또는 8방향 × 행동별 낱장
 
 호출: blender -b -P scripts/_sheet_render.py -- <config.json>
 """
-import bpy, math, os, sys, json, functools
+import bpy, math, os, sys, json, functools, re
 from mathutils import Vector, Matrix, Euler
 from bpy_extras.object_utils import world_to_camera_view
 
@@ -88,10 +88,16 @@ WEAPON_REF_H   = float(cfg.get("weapon_ref_height", 0.0))
 DIR16_LABELS = ["E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW",
                 "W", "WNW", "NW", "NNW", "N", "NNE", "NE", "ENE"]
 DIRECTIONS = int(cfg.get("directions", 16))
-if DIRECTIONS not in (8, 16):
-    raise Exception(f"directions 는 8 또는 16 만 지원합니다: {DIRECTIONS}")
-DIR_LABELS   = DIR16_LABELS if DIRECTIONS == 16 else DIR16_LABELS[::2]
-DIR_AZIMUTHS = [(270 + 360.0 / DIRECTIONS * i) % 360 for i in range(DIRECTIONS)]
+if DIRECTIONS not in (1, 8, 16):
+    raise Exception(f"directions 는 1, 8, 16 만 지원합니다: {DIRECTIONS}")
+if DIRECTIONS == 1:
+    # npc 단방향(2026-07-10) — 정면(S, 남향) 1방향만 렌더한다(idle 단일 애니로 고정 서 있기,
+    # 이동이 없어 방향 전환 불필요). azimuth 는 16방향 S(index 4)와 동일한 0.0(=(270+90)%360).
+    DIR_LABELS = ["S"]
+    DIR_AZIMUTHS = [0.0]
+else:
+    DIR_LABELS = DIR16_LABELS if DIRECTIONS == 16 else DIR16_LABELS[::2]
+    DIR_AZIMUTHS = [(270 + 360.0 / DIRECTIONS * i) % 360 for i in range(DIRECTIONS)]
 CAM_RADIUS = 12.0
 # Hips(root motion 추적용 골반 본)는 리그마다 이름이 다르다 → import 후 자동 감지(detect_hips).
 # 우선순위: mixamorig:Hips(Mixamo) > pelvis/Hips(Unreal Mannequin·표준) > root.
@@ -395,6 +401,19 @@ def import_action(path, name):
     new_o = [o for o in bpy.data.objects if o.name not in before_o]
     src_act = new_a[0] if new_a else None
     src_arm = next((o for o in new_o if o.type == "ARMATURE"), None)
+    # 🛑 Mixamo 중복 export 접두사(mixamorig1:/mixamorig2: 등)를 mixamorig: 로 정규화한다(2026-07-10).
+    # 애니 fbx 본 이름이 mixamorig1:Hips 인데 캐릭터는 mixamorig:Hips 라 교집합 0 → 정적·뒤집힘 렌더
+    # 되던 회귀(ryen 실측). 본 이름 변경 시 그 armature 의 action fcurve data_path 도 Blender 가 자동
+    # 갱신하므로, 정규화 후엔 캐릭터 rig 와 본이 일치해 '직접적용' 경로를 탄다.
+    if src_arm:
+        _n = 0
+        for _b in src_arm.data.bones:
+            _nn = re.sub(r"^mixamorig\d+:", "mixamorig:", _b.name)
+            if _nn != _b.name:
+                _b.name = _nn
+                _n += 1
+        if _n:
+            print(f"####INFO 애니 본 접두사 정규화 mixamorig<N>: → mixamorig: ({_n}본)")
     result = None
     if src_act and src_arm:
         char_bones = set(b.name for b in arm.data.bones)
@@ -449,6 +468,11 @@ def match_embedded(actions_wanted, embedded):
         if pick:
             result[want] = pick
             used.add(pick)
+    # 🛑 fallback(npc, 2026-07-10): idle 을 원하는데 별칭으로 못 찾았고 내장 애니가 정확히 1개면 그걸
+    # idle 로 쓴다. Mixamo export 는 애니 이름이 "mixamo.com"(별칭 밖)이라 매칭 실패 → npc idle 정적·
+    # 뒤집힘 회귀 방지(ryen 실측). 내장이 여럿(pc/mob)이면 적용 안 함(오매칭 방지).
+    if "idle" in actions_wanted and "idle" not in result and len(embedded) == 1:
+        result["idle"] = embedded[0]
     return result
 
 actions = {}
