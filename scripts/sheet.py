@@ -727,13 +727,19 @@ def fix_offset_y(atlas_path):
     print(f"  ✓ Y trim offsetY 보정(발 점프 방지) — {n} region top-left 정합")
 
 
-def verify_cells_and_report(frames_dir):
+def verify_cells_and_report(frames_dir, pass_label="", clip_log_path=None,
+                            clip_frames_out=None):
     """렌더된 낱장 프레임의 cell 잘림(clip)을 verify_cells.py 로 검사해 리포트하고, 잘린 행동의
     권장 scale({action: scale})을 반환한다(잘림 없으면 {}). numpy 필요 → uv 격리 실행.
 
     🛑 왜: run/attack 등 큰 모션이 셀(render_res) 밖으로 나가면 프레임 테두리가 clip 된다.
     flutter 실행 없이 *생성된 이미지만으로* 이를 잡아 --scale-<action> 권장값을 준다
-    ([verify_cells.py]). --auto-fit-scale 이면 그 권장값으로 자동 재렌더한다(main 루프)."""
+    ([verify_cells.py]). --auto-fit-scale 이면 그 권장값으로 잘린 행동만 자동 재렌더한다(main 루프).
+
+    잘린 프레임 기록(2026-07-09, sheet-win.py 정합): 행동별 *최악(가장 많이 잘린) 프레임 1장* 을
+    ① 콘솔에 출력하고 ② clip_log_path 가 있으면 outputs/clip.log 에 pass 마다 append 하고(auto-fit
+    각 pass 가 어느 행동을 재렌더하는지 파일로 추적) ③ clip_frames_out(dict) 을 채워 main() 이
+    실행 끝에 최종 요약(어떤 프레임이 clip 에 영향)을 내게 한다."""
     script = os.path.join(HERE, "verify_cells.py")
     uv = shutil.which("uv")
     cmd = ([uv, "run", "--with", "pillow", "--with", "numpy", "python3", script,
@@ -750,9 +756,14 @@ def verify_cells_and_report(frames_dir):
     except (json.JSONDecodeError, ValueError):
         print("  ❌ cell 잘림 검사 결과 JSON 파싱 실패:\n     " + (o.stdout or "")[-200:])
         return None
+    # 🛑 매 pass 마다 요약 초기화 — auto-fit 재렌더로 이전 pass 에서 잘리던 행동이 이번엔 정상이면
+    # 그 stale 항목이 최종 요약에 남지 않게 한다(최신 pass 상태만 반영).
+    if clip_frames_out is not None:
+        clip_frames_out.clear()
     clipped = {a: r for a, r in per.items() if r.get("clipped", 0) > 0}
     if not clipped:
         print("  ✅ cell 잘림 검사 — 전 행동 정상(셀 안, 잘림 없음).")
+        _append_clip_log(clip_log_path, pass_label, {})  # "잘림 없음"도 로그에 남긴다
         return {}
     print(f"  ⚠️ cell 잘림 검사 — {len(clipped)}종 행동에서 셀 밖 잘림(clip) 감지:")
     rec = {}
@@ -761,7 +772,58 @@ def verify_cells_and_report(frames_dir):
         print(f"       {a}: {r['clipped']}/{r['frames']} 프레임 · 테두리 {r['max_frac'] * 100:.0f}% "
               f"[{edges}] → 권장 --scale-{a} {r['recommended_scale']}")
         rec[a] = r["recommended_scale"]
+        # 행동별 최악(가장 많이 잘린) 프레임 — 어느 프레임이 clip 에 가장 영향을 주는지.
+        we = ", ".join(f"{e}={v*100:.0f}%" for e, v in r.get("worst_edges", {}).items())
+        print(f"           · 최악 프레임: {r.get('worst')}  ({r['max_frac']*100:.0f}% [{we}])")
+        if clip_frames_out is not None:
+            clip_frames_out[a] = {
+                "worst": r.get("worst"),
+                "frac": r["max_frac"],
+                "edges": r.get("worst_edges", {}),
+                "clipped": r["clipped"],
+                "frames": r["frames"],
+                "recommended_scale": r["recommended_scale"],
+            }
+    _append_clip_log(clip_log_path, pass_label, clipped)
     return rec
+
+
+def _append_clip_log(clip_log_path, pass_label, clipped_per_action):
+    """outputs/clip.log 에 이번 검사(pass)의 잘림 결과를 append 한다. clip_log_path 가 None 이면 no-op.
+
+    로그 포맷(행동별 *최악 프레임 1장* — 한 행동당 한 줄):
+        [<pass_label>] <action> worst=<frame>  frac=NN%  edges=top=..,right=..  (clipped C/F)
+    잘림이 하나도 없으면 '(no clip)' 한 줄만 남긴다. 파일은 main() 이 실행 첫머리에 clear_clip_log
+    로 1회 비운다 — 그래서 한 번의 sheet.py 실행 = clip.log 한 세트(pass 별로 이어붙는다)."""
+    if not clip_log_path:
+        return
+    try:
+        with open(clip_log_path, "a", encoding="utf-8") as f:
+            header = f"[{pass_label}] " if pass_label else ""
+            if not clipped_per_action:
+                f.write(f"{header}(no clip — 전 행동 셀 안, 잘림 없음)\n")
+                return
+            for a in sorted(clipped_per_action):
+                r = clipped_per_action[a]
+                e = ",".join(f"{k}={v*100:.0f}%" for k, v in r.get("worst_edges", {}).items())
+                f.write(f"{header}{a} worst={r.get('worst')}  frac={r.get('max_frac', 0)*100:.0f}%  "
+                        f"edges={e}  (clipped {r.get('clipped', 0)}/{r.get('frames', 0)})\n")
+    except OSError as e:
+        print(f"  ⚠️ clip.log 기록 실패(무시하고 진행): {e}")
+
+
+def clear_clip_log(clip_log_path):
+    """sheet.py 실행 첫머리에 clip.log 를 비운다(매 실행마다 clear — 한 실행 = clip.log 한 세트).
+    헤더 두 줄(포맷 설명)을 남겨 이후 append 와 구분한다."""
+    if not clip_log_path:
+        return
+    try:
+        os.makedirs(os.path.dirname(clip_log_path), exist_ok=True)
+        with open(clip_log_path, "w", encoding="utf-8") as f:
+            f.write("# clip.log — sheet.py cell 잘림 기록. 매 실행 첫머리에 초기화.\n")
+            f.write("# 포맷: [pass] <action> worst=<frame>  frac=테두리불투명%  edges=변별%  (clipped C/F)\n")
+    except OSError as e:
+        print(f"  ⚠️ clip.log 초기화 실패(무시하고 진행): {e}")
 
 
 def inject_action_scales(atlas_path, action_scales):
@@ -1305,6 +1367,11 @@ def main():
     os.makedirs(outputs, exist_ok=True)
     cfg_path = os.path.join(outputs, "_sheet_config.json")
     json.dump(cfg, open(cfg_path, "w"), indent=2)
+    # cell 잘림(clip) 기록 — 매 검사 pass 의 잘림을 outputs/clip.log 에 append 한다(부분 재렌더 추적).
+    # clip_frames_summary 는 실행 끝에 '어떤 프레임이 clip 에 영향을 주는지' 최종 요약용(마지막 pass 상태).
+    clip_log_path = os.path.join(outputs, "clip.log") if args.verify_cells else None
+    clear_clip_log(clip_log_path)  # 실행 첫머리 1회 초기화 (한 실행 = clip.log 한 세트)
+    clip_frames_summary = {}
 
     total_cols = sum(frames.get(a, 8) for a in actions)
     grid_w, grid_h = total_cols * cell, directions * cell
@@ -1414,7 +1481,10 @@ def main():
             # ── cell 잘림 검사(--verify-cells) + auto-fit 재렌더 판단 ──
             if not args.verify_cells:
                 break
-            _rec = verify_cells_and_report(frames_dir)
+            _pass_label = f"render{'' if _fit == 0 else f'/auto-fit {_fit}'}"
+            _rec = verify_cells_and_report(frames_dir, pass_label=_pass_label,
+                                           clip_log_path=clip_log_path,
+                                           clip_frames_out=clip_frames_summary)
             if _rec is None:  # 검사 자체 실패(의존성/파싱 오류)
                 if args.auto_fit_scale:
                     sys.exit("❌ cell 잘림 검사 실패 — --auto-fit-scale 은 검사 없이 진행할 수 없다"
@@ -1457,7 +1527,9 @@ def main():
     if args.build_only:
         if args.verify_cells:
             print("\n[검사] 기존 낱장 프레임 cell 잘림 검사(--build-only — auto-fit 불가, 리포트만):")
-            _bo_rec = verify_cells_and_report(frames_dir)
+            _bo_rec = verify_cells_and_report(frames_dir, pass_label="build-only",
+                                              clip_log_path=clip_log_path,
+                                              clip_frames_out=clip_frames_summary)
             if _bo_rec is None:
                 print("   ⚠️ 검사 실패 — 잘림 확인 없이 packing 진행(의존성 확인)")
             elif _bo_rec:
