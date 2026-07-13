@@ -121,6 +121,32 @@ def _fmt_dur(seconds):
     return f"{s // 3600}h{(s % 3600) // 60:02d}m"
 
 
+def _parse_saved_path(line):
+    """Extract just the saved file path from Blender's `Saved: '<fullpath>' Time: …` line.
+    Blender wraps the path in single quotes, so return what's inside the first '…' (or the
+    text after 'Saved:' up to Time: when unquoted). Used to log which frame files are baked.
+    Returns None on failure."""
+    a = line.find("'")
+    if a != -1:
+        b = line.find("'", a + 1)
+        if b != -1:
+            return line[a + 1:b]
+    rest = line[len("Saved:"):].strip()
+    if not rest:
+        return None
+    # Unquoted exception format — treat everything before ' Time:' as the path.
+    ti = rest.find(" Time:")
+    return (rest[:ti] if ti != -1 else rest).strip() or None
+
+
+def _is_foot_mask(path):
+    """Whether the saved-frame path is a foot-alignment _foot mask. Masks are baked under
+    OUT_FRAMES/_foot/ (build-only helper frames, not used at runtime), so exclude them from
+    the per-frame generation log."""
+    p = path.replace("\\", "/")
+    return "/_foot/" in p or p.endswith("/_foot") or os.path.basename(os.path.dirname(p)) == "_foot"
+
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -1884,6 +1910,13 @@ def main():
                     print("   " + line[4:])
                 elif line.startswith("Saved:"):
                     saved += 1
+                    # 생성되는 낱장 프레임을 한 장씩 로그로 남긴다(사용자 지시 — 어떤 프레임이
+                    # 언제 구워지는지 추적). Blender 는 `Saved: '<fullpath>' Time: …` 형식으로
+                    # 최종 프레임과 _foot 마스크 렌더를 모두 출력하므로, 경로에서 파일명을 뽑아
+                    # *최종 프레임만*(경로에 '_foot' 없음) 프레임 로그로 찍고 마스크는 건너뛴다.
+                    _saved_path = _parse_saved_path(line)
+                    if _saved_path and not _is_foot_mask(_saved_path):
+                        print(f"   · frame {os.path.basename(_saved_path)}", flush=True)
                     # 진행률 분모는 *이번 pass* 프레임 수(_pass_frames) — 부분 재렌더면 재렌더 대상만.
                     # Saved 는 최종 렌더 + _foot 마스크 렌더 둘 다 카운트되므로 _pass_frames 를 넘을 수
                     # 있다(마스크 저해상). 표시는 min 으로 클램프해 "120%" 같은 오표시를 막는다.

@@ -116,6 +116,31 @@ def _fmt_dur(seconds):
         return f"{s // 60}m{s % 60:02d}s"
     return f"{s // 3600}h{(s % 3600) // 60:02d}m"
 
+
+def _parse_saved_path(line):
+    """Blender 의 `Saved: '<fullpath>' Time: …` 한 줄에서 저장된 파일 경로만 뽑는다.
+    Blender 는 경로를 작은따옴표로 감싸므로 첫 '…' 안을 반환한다(따옴표 없으면 'Saved:' 뒤
+    Time 앞까지). 프레임 생성 로그(어떤 파일이 구워졌는지)를 남기는 데 쓴다. 실패 시 None."""
+    a = line.find("'")
+    if a != -1:
+        b = line.find("'", a + 1)
+        if b != -1:
+            return line[a + 1:b]
+    rest = line[len("Saved:"):].strip()
+    if not rest:
+        return None
+    # 따옴표가 없는 예외 포맷 — ' Time:' 이전까지를 경로로 본다.
+    ti = rest.find(" Time:")
+    return (rest[:ti] if ti != -1 else rest).strip() or None
+
+
+def _is_foot_mask(path):
+    """저장된 프레임 경로가 발 정렬용 _foot 마스크인지 판정한다. 마스크는 OUT_FRAMES/_foot/ 아래
+    에 구워지므로(빌드 보조 프레임·런타임 미사용) 프레임 생성 로그에서 제외한다."""
+    p = path.replace("\\", "/")
+    return "/_foot/" in p or p.endswith("/_foot") or os.path.basename(os.path.dirname(p)) == "_foot"
+
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -1706,6 +1731,13 @@ def main():
                     print("   " + line[4:])
                 elif line.startswith("Saved:"):
                     saved += 1
+                    # 생성되는 낱장 프레임을 한 장씩 로그로 남긴다(사용자 지시 — 어떤 프레임이
+                    # 언제 구워지는지 추적). Blender 는 `Saved: '<fullpath>' Time: …` 형식으로
+                    # 최종 프레임과 _foot 마스크 렌더를 모두 출력하므로, 경로에서 파일명을 뽑아
+                    # *최종 프레임만*(경로에 '_foot' 없음) 프레임 로그로 찍고 마스크는 건너뛴다.
+                    _saved_path = _parse_saved_path(line)
+                    if _saved_path and not _is_foot_mask(_saved_path):
+                        print(f"   · frame {os.path.basename(_saved_path)}", flush=True)
                     # 진행률 분모는 *이번 pass* 프레임 수(_pass_frames) — 부분 재렌더면 재렌더 대상만.
                     # Saved 는 최종 렌더 + _foot 마스크 렌더 둘 다 카운트되므로 _pass_frames 를 넘을 수
                     # 있다(마스크 저해상). 표시는 min 으로 클램프해 "120%" 같은 오표시를 막는다.
