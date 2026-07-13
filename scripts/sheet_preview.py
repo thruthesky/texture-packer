@@ -21,7 +21,7 @@ Cross-platform (macOS + Windows):
   (Windows). Everything else — the 4-direction preview logic — is identical on both.
 
 Self-contained design (shared production helpers untouched):
-  The production _sheet_render.py / _sheet_build.py only allow directions in {8, 16} (4 rejected).
+  The production _sheet_render.py / _sheet_build.py only allow directions in {1, 8, 16} (4 rejected).
   To avoid *touching* those shared helpers, this script **auto-generates two helpers** next to them:
     scripts/_sheet_preview_render.py  — copy of the production render helper + a 4-direction patch.
     scripts/_sheet_preview_build.py   — copy of the production build helper + a 4-direction patch.
@@ -152,45 +152,62 @@ def _ensure_preview_helpers():
     # -- render helper -------------------------------------------------
     with open(_RENDER_SRC, encoding="utf-8") as f:
         render_src = f.read()
-    # (a) Allow 4 in the directions {8,16} guard.
-    render_src = render_src.replace(
-        "if DIRECTIONS not in (8, 16):\n"
-        "    raise Exception(f\"directions 는 8 또는 16 만 지원합니다: {DIRECTIONS}\")",
-        "if DIRECTIONS not in (4, 8, 16):\n"
-        "    raise Exception(f\"directions must be 4(preview), 8, or 16: {DIRECTIONS}\")")
+    # (a) Allow 4 in the directions guard. The production guard's allowed set has drifted over time
+    #     (was {8,16}, then {1,8,16}); rather than string-match one exact wording, patch whichever of
+    #     the known variants is present. Each _require_replaced asserts the replacement actually fired,
+    #     so if production changes the guard again this fails loudly instead of silently rejecting 4.
+    render_src = _require_replaced(
+        render_src, "directions guard", [
+            ('if DIRECTIONS not in (1, 8, 16):\n'
+             '    raise Exception(f"directions 는 1, 8, 16 만 지원합니다: {DIRECTIONS}")',
+             'if DIRECTIONS not in (1, 4, 8, 16):\n'
+             '    raise Exception(f"directions must be 1, 4(preview), 8, or 16: {DIRECTIONS}")'),
+            ('if DIRECTIONS not in (8, 16):\n'
+             '    raise Exception(f"directions 는 8 또는 16 만 지원합니다: {DIRECTIONS}")',
+             'if DIRECTIONS not in (4, 8, 16):\n'
+             '    raise Exception(f"directions must be 4(preview), 8, or 16: {DIRECTIONS}")'),
+        ])
     # (b) Add a 4-direction branch to the DIR_LABELS definition (every 4th of 16 = [E, S, W, N]).
-    render_src = render_src.replace(
-        "DIR_LABELS   = DIR16_LABELS if DIRECTIONS == 16 else DIR16_LABELS[::2]",
-        "DIR_LABELS   = (DIR16_LABELS if DIRECTIONS == 16\n"
-        "                else DIR16_LABELS[::2] if DIRECTIONS == 8\n"
-        "                else DIR16_LABELS[::4])   # 4-direction preview = [E, S, W, N]")
-    # (c) Scope the stale-frame purge to *only this pass's actions* (per-action character override).
-    #     When cfg["purge_actions"] is set, only PNGs belonging to those actions are removed, so an
-    #     earlier base/default-character pass's frames survive while a later override pass replaces
-    #     only its own action(s). Without the key the original behaviour (purge all) is preserved.
-    render_src = render_src.replace(
-        "for _f in os.listdir(OUT_FRAMES):\n"
-        "    if _f.endswith(\".png\"):",
-        "_PURGE_ACTS = cfg.get(\"purge_actions\")   # None = purge all (original); list = only these actions\n"
-        "for _f in os.listdir(OUT_FRAMES):\n"
-        "    if _f.endswith(\".png\") and (_PURGE_ACTS is None\n"
-        "                                 or _f.rsplit(\"_\", 2)[0] in _PURGE_ACTS):")
-    # (d) Let an override pass skip overwriting _measure.json so the base character's body_ratio /
-    #     foot_anchor stays authoritative for compositing (cfg["skip_measure"]).
-    render_src = render_src.replace(
-        "measure_body_foot()\n",
-        "if not cfg.get(\"skip_measure\"):\n"
-        "    measure_body_foot()\n", 1)
+    #     Note DIR_AZIMUTHS is already computed generically for N directions, so only the *labels*
+    #     need a 4-direction case. The production line has been both `DIR_LABELS   = ...` (aligned)
+    #     and `DIR_LABELS = ...` (single space, inside an `if DIRECTIONS == 1: ... else:` block).
+    render_src = _require_replaced(
+        render_src, "DIR_LABELS 4-direction branch", [
+            ("DIR_LABELS = DIR16_LABELS if DIRECTIONS == 16 else DIR16_LABELS[::2]",
+             "DIR_LABELS = (DIR16_LABELS if DIRECTIONS == 16\n"
+             "                  else DIR16_LABELS[::2] if DIRECTIONS == 8\n"
+             "                  else DIR16_LABELS[::4])   # 4-direction preview = [E, S, W, N]"),
+            ("DIR_LABELS   = DIR16_LABELS if DIRECTIONS == 16 else DIR16_LABELS[::2]",
+             "DIR_LABELS   = (DIR16_LABELS if DIRECTIONS == 16\n"
+             "                else DIR16_LABELS[::2] if DIRECTIONS == 8\n"
+             "                else DIR16_LABELS[::4])   # 4-direction preview = [E, S, W, N]"),
+        ])
+    # (c) Let an override pass skip overwriting _measure.json so the base character's body_ratio /
+    #     foot_anchor stays authoritative for compositing (cfg["skip_measure"]). The stale-frame purge
+    #     is now scoped by the production helper itself via _wipe_pngs(OUT_FRAMES, ONLY_ACTIONS), which
+    #     the preview drives by setting cfg["only_actions"] per pass (see main()) — no purge patch needed.
+    render_src = _require_replaced(
+        render_src, "skip_measure guard", [
+            ("measure_body_foot()\n",
+             "if not cfg.get(\"skip_measure\"):\n"
+             "    measure_body_foot()\n"),
+        ], count=1)
     _write_if_changed(_RENDER_DST, _PREVIEW_BANNER + render_src)
 
     # -- build helper --------------------------------------------------
     with open(_BUILD_SRC, encoding="utf-8") as f:
         build_src = f.read()
-    build_src = build_src.replace(
-        "ROWS    = _DIR16 if _NDIR == 16 else _DIR16[::2]",
-        "ROWS    = (_DIR16 if _NDIR == 16\n"
-        "           else _DIR16[::2] if _NDIR == 8\n"
-        "           else _DIR16[::4])   # 4-direction preview = [E, S, W, N]")
+    build_src = _require_replaced(
+        build_src, "ROWS 4-direction branch", [
+            ("ROWS    = _DIR16 if _NDIR == 16 else _DIR16[::2]",
+             "ROWS    = (_DIR16 if _NDIR == 16\n"
+             "           else _DIR16[::2] if _NDIR == 8\n"
+             "           else _DIR16[::4])   # 4-direction preview = [E, S, W, N]"),
+            ("ROWS = _DIR16 if _NDIR == 16 else _DIR16[::2]",
+             "ROWS = (_DIR16 if _NDIR == 16\n"
+             "        else _DIR16[::2] if _NDIR == 8\n"
+             "        else _DIR16[::4])   # 4-direction preview = [E, S, W, N]"),
+        ])
     _write_if_changed(_BUILD_DST, _PREVIEW_BANNER + build_src)
 
 
@@ -199,6 +216,28 @@ _PREVIEW_BANNER = (
     "# This is a copy of production _sheet_render.py / _sheet_build.py + a 4-direction(preview) patch,\n"
     "# regenerated from the originals on every sheet_preview.py run (the originals are the SSOT). Edit the originals.\n"
 )
+
+
+def _require_replaced(src, what, variants, count=-1):
+    """Apply the first (old, new) variant found in src; hard-fail if none match.
+
+    The preview helpers are generated by patching the *production* _sheet_render.py / _sheet_build.py
+    (the SSOT) via string replacement. When production is refactored, an old exact-match target silently
+    stops matching and the patch becomes a no-op — which is exactly how the 4-direction preview broke
+    (production's guard drifted 8,16 -> 1,8,16 and the preview kept looking for the old wording, so 4
+    stayed rejected). To make that failure loud instead of silent, we try each known wording variant in
+    order and raise if the production source matches none, so a future refactor fails at generation time
+    with a clear message instead of at Blender-render time with a confusing 'directions ... 만 지원합니다'.
+    """
+    for old, new in variants:
+        if old in src:
+            return src.replace(old, new, count)
+    raise SystemExit(
+        f"sheet_preview.py: could not patch the production render/build helper for '{what}'.\n"
+        f"   The production _sheet_render.py / _sheet_build.py wording changed and no known variant\n"
+        f"   matched. Update the variants list in sheet_preview.py:_ensure_preview_helpers() to the\n"
+        f"   current production source. (This guard exists because a silent no-op previously made the\n"
+        f"   4-direction preview reject directions=4.)")
 
 
 def _write_if_changed(path, content):
@@ -693,7 +732,11 @@ def main():
         pcfg = dict(cfg_base)
         pcfg["character"] = char
         pcfg["actions"] = pass_actions
-        pcfg["purge_actions"] = pass_actions      # scope stale-frame purge to this pass only
+        # Scope this pass's render + stale-frame purge to just its actions. The production helper
+        # purges via _wipe_pngs(OUT_FRAMES, ONLY_ACTIONS) and renders only ONLY_ACTIONS∩ACTIONS, so
+        # setting only_actions here keeps an earlier base/default-character pass's frames intact while
+        # this override pass replaces only its own action(s). (Replaces the old purge_actions patch.)
+        pcfg["only_actions"] = pass_actions
         pcfg["skip_measure"] = (len(render_passes) > 0)   # only the first emitted pass measures
         pcfg_path = os.path.join(outputs, f"_sheet_config_pass{i}.json")
         json.dump(pcfg, open(pcfg_path, "w"), indent=2)
