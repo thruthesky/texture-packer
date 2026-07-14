@@ -928,6 +928,11 @@ for name in _render_actions:
             fname = f"{name}_{label}_{idx:02d}.png"
             r.filepath = os.path.join(OUT_FRAMES, fname)
             bpy.ops.render.render(write_still=True)   # 최종(검 포함)
+            # 🛑 프레임별 생성 마커 — Blender 의 C-level `Saved: '…'` 는 Windows 에서 pipe 로
+            # block-buffered 되어 부모가 실시간으로 못 읽는다(macOS 는 line-buffered 라 정상).
+            # Python print(flush=True, 라인35) 로 직접 찍어 플랫폼 무관하게 프레임 단위 로그를 보장한다.
+            # sheet.py/sheet-win.py 가 `####FRAME <fname>` 를 파싱해 "· frame <fname>" 로 표시한다.
+            print(f"####FRAME {fname}")
             _render_foot_mask(fname)                  # 검 제외 캐릭터 실루엣 → _foot/fname (발 정렬용)
             total += 1
 print(f"####FOOTMASK saved → {FOOT_MASK_DIR}")

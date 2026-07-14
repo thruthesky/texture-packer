@@ -1906,29 +1906,31 @@ def main():
                 if line.startswith("####ACTION "):
                     cur_action = (line.split()[1] if len(line.split()) > 1 else "")
                     print(f"   ▶ rendering action {line[len('####ACTION '):]} …", flush=True)
-                elif line.startswith("####"):
-                    print("   " + line[4:])
-                elif line.startswith("Saved:"):
+                elif line.startswith("####FRAME "):
+                    # 🛑 프레임별 생성 로그 — _sheet_render.py 가 최종 프레임(검 포함)마다 Python
+                    # print(flush=True) 로 찍는 결정적 마커. Blender 의 C-level `Saved: '…'` 는
+                    # Windows 에서 pipe block-buffering 으로 실시간 도착이 안 돼(macOS 만 정상) 프레임
+                    # 로그가 안 보였다 → 이 마커는 _foot 마스크를 세지 않고 최종 프레임만 정확히
+                    # _pass_frames 개 나오므로 로그·진행률 둘 다 이걸로 구동한다(clamp 불필요).
                     saved += 1
-                    # 생성되는 낱장 프레임을 한 장씩 로그로 남긴다(사용자 지시 — 어떤 프레임이
-                    # 언제 구워지는지 추적). Blender 는 `Saved: '<fullpath>' Time: …` 형식으로
-                    # 최종 프레임과 _foot 마스크 렌더를 모두 출력하므로, 경로에서 파일명을 뽑아
-                    # *최종 프레임만*(경로에 '_foot' 없음) 프레임 로그로 찍고 마스크는 건너뛴다.
-                    _saved_path = _parse_saved_path(line)
-                    if _saved_path and not _is_foot_mask(_saved_path):
-                        print(f"   · frame {os.path.basename(_saved_path)}", flush=True)
+                    fname = line[len("####FRAME "):].strip()
+                    print(f"   · frame {fname}", flush=True)
                     # 진행률 분모는 *이번 pass* 프레임 수(_pass_frames) — 부분 재렌더면 재렌더 대상만.
-                    # Saved 는 최종 렌더 + _foot 마스크 렌더 둘 다 카운트되므로 _pass_frames 를 넘을 수
-                    # 있다(마스크 저해상). 표시는 min 으로 클램프해 "120%" 같은 오표시를 막는다.
                     if saved % 24 == 0 or saved >= _pass_frames:
                         el = time.monotonic() - t_r0
                         fps = saved / el if el > 0 else 0
-                        _shown = min(saved, _pass_frames)
-                        eta = max(0, (_pass_frames - _shown)) / fps if fps > 0 else 0
-                        pct = int(_shown / _pass_frames * 100) if _pass_frames else 0
+                        eta = max(0, (_pass_frames - saved)) / fps if fps > 0 else 0
+                        pct = int(saved / _pass_frames * 100) if _pass_frames else 0
                         tail = f" · {cur_action}" if cur_action else ""
-                        print(f"   … {_shown}/{_pass_frames} ({pct}%) · {fps:.1f} frames/s · ETA {_fmt_dur(eta)}{tail}",
+                        print(f"   … {saved}/{_pass_frames} ({pct}%) · {fps:.1f} frames/s · ETA {_fmt_dur(eta)}{tail}",
                               flush=True)
+                elif line.startswith("####"):
+                    print("   " + line[4:])
+                elif line.startswith("Saved:"):
+                    # Blender 의 C-level 저장 로그. 프레임 카운트·로그는 위 ####FRAME 이 담당하므로
+                    # 여기서는 무시한다(Windows 에선 버퍼링으로 뒤늦게 몰려 오고, 마스크까지 섞여
+                    # 이중 카운트 위험). --verbose 는 이미 위에서 원본 그대로 출력한다.
+                    pass
                 elif any(k in line for k in ("Error", "Traceback", "Exception", "Failed")):
                     errs.append(line)
             proc.wait()
