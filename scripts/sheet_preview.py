@@ -505,9 +505,19 @@ def main():
                          "cell, enlarge (e.g. 1.1) if too small. Unlike margin (padding), this is an intentional "
                          "scale-up/down (same as sheet.py --scale).")
     ap.add_argument("--elev", type=float, default=30.0, help="Camera elevation (2:1=30 deg)")
-    ap.add_argument("--shading", choices=["eevee", "texture"], default="eevee",
+    # --shading mirrors sheet.py/sheet-win.py. The *render* side of chrome needs nothing here: the
+    # preview render helper is regenerated from the production _sheet_render.py on every run
+    # (_ensure_preview_helpers), so it inherits the chrome branch automatically. Only this choices
+    # list gates it — without "chrome" argparse rejects the flag before the renderer ever sees it.
+    ap.add_argument("--shading", choices=["eevee", "texture", "chrome"], default="eevee",
                     help="Render shading. eevee=PBR 3-point lighting (default, same as sheet.py) · "
-                         "texture=WORKBENCH TEXTURE (avoids rendering metal black).")
+                         "texture=WORKBENCH TEXTURE (avoids rendering metal black) · "
+                         "chrome=WORKBENCH MATCAP (chrome/mirror metal armor x texture color). "
+                         "NOTE: chrome is unreachable via material metallic=1 (texture mode ignores "
+                         "it; eevee renders it black for lack of an environment to reflect).")
+    ap.add_argument("--chrome-matcap", default="fullmetal.exr",
+                    help="Blender built-in matcap used by --shading chrome "
+                         "(fullmetal=chrome · metal_carpaint=red metal · metal_bronze=bronze)")
     ap.add_argument("--vivid", type=int, default=5, choices=range(1, 10), metavar="1-9",
                     help="Color intensity (contrast) + brightness strength (1-9, default 5, same as "
                          "sheet.py). 5=moderately bright/vivid, 9=max, 1=no boost. Applied via "
@@ -698,6 +708,7 @@ def main():
         "scale": args.scale,
         "action_scales": action_scales,
         "shading": args.shading,
+        "chrome_matcap": args.chrome_matcap,
         "color_level": int(args.vivid),
         "png_colors": args.png_colors,
         "draft": args.draft,
@@ -767,7 +778,10 @@ def main():
     print(f"  sheet out  : {sheet_png}  (preview — NOT production assets/)")
     print(f"  info out   : {manifest_png} · {name}_layout.md")
     print(f"  cell size  : {cell} x {cell} px   K(target body height)={args.k:.0f}px -> display=K/body_ratio")
-    print(f"  shading    : {args.shading}" + ("  (PBR 3-point lighting)" if args.shading == "eevee" else "  (WORKBENCH TEXTURE)")
+    _shading_desc = {"eevee": "  (PBR 3-point lighting)",
+                     "texture": "  (WORKBENCH TEXTURE)",
+                     "chrome": f"  (WORKBENCH MATCAP {args.chrome_matcap} x TEXTURE - chrome)"}
+    print(f"  shading    : {args.shading}" + _shading_desc.get(args.shading, "")
           + f"   vivid={args.vivid}/9 (contrast+brightness boost)")
     print(f"  framing    : auto-fit (full model incl. weapon), margin x{args.margin}, scale x{args.scale}"
           + ("" if args.scale == 1.0 else ("  <- bigger" if args.scale > 1.0 else "  <- smaller")))
