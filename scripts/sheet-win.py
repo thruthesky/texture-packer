@@ -1481,8 +1481,14 @@ def main():
     ap.add_argument("--scale", type=float, default=1.0,
                     help="Overall model size factor within the cell (default 1.0). >1 larger · <1 smaller.")
     ap.add_argument("--elev", type=float, default=30.0, help="Camera elevation angle (2:1=30°)")
-    ap.add_argument("--shading", choices=["eevee", "texture"], default="eevee",
-                    help="Render shading. eevee=PBR 3-point lighting (default) · texture=WORKBENCH TEXTURE")
+    ap.add_argument("--shading", choices=["eevee", "texture", "chrome"], default="eevee",
+                    help="Render shading. eevee=PBR 3-point lighting (default) · texture=WORKBENCH TEXTURE · "
+                         "chrome=WORKBENCH MATCAP (chrome/mirror metal armor x texture color). "
+                         "NOTE: chrome is unreachable via material metallic=1 (texture mode ignores it; "
+                         "eevee renders it black for lack of an environment to reflect) - matcap is the only path")
+    ap.add_argument("--chrome-matcap", default="fullmetal.exr",
+                    help="Blender built-in matcap used by --shading chrome "
+                         "(fullmetal=chrome · metal_carpaint=red metal · metal_bronze=bronze)")
     ap.add_argument("--vivid", type=int, default=5, choices=range(1, 10), metavar="1-9",
                     help="Color saturation (contrast)+brightness strength (1~9, default 5). 5=moderately bright and vivid, "
                          "9=max, 1=no boost. Auto-applied via compositor after rendering.")
@@ -1819,6 +1825,7 @@ def main():
         "loop_actions": (["idle", "walk"] if args.kind == "npc" else ["idle", "walk", "run"]),
         "render_res": render_res, "elev": args.elev, "margin": args.margin,
         "scale": args.scale, "shading": args.shading,
+        "chrome_matcap": args.chrome_matcap,
         "color_level": int(args.vivid),
         "png_colors": png_colors, "draft": args.draft,
         "weapon": (os.path.abspath(args.weapon) if args.weapon else None),
@@ -1849,7 +1856,10 @@ def main():
     mode = "packed atlas (TexturePacker)" if args.texture_pack else f"grid sheet (uniform {cell})"
     print(f"  output mode : {mode}")
     print(f"  output dir  : {rel_folder}/{name}.png" + ("  + .atlas" if args.texture_pack else ""))
-    print(f"  shading     : {args.shading}" + ("  (PBR 3-point light)" if args.shading == "eevee" else "  (WORKBENCH TEXTURE)"))
+    _shading_desc = {"eevee": "  (PBR 3-point light)",
+                     "texture": "  (WORKBENCH TEXTURE)",
+                     "chrome": f"  (WORKBENCH MATCAP {args.chrome_matcap} x TEXTURE - chrome)"}
+    print(f"  shading     : {args.shading}" + _shading_desc.get(args.shading, ""))
     print(f"  color power : vivid={args.vivid}/9  (contrast+brightness boost, 5=medium)")
     print(f"  color comp  : " + ("256-color quantize (~80% smaller, visually identical)" if args.color_compression else "lossless RGBA"))
     print(f"  cell size   : {cell}px   render {render_res}px" + ("  ⚡draft" if args.draft else ""))

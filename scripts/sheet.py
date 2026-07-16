@@ -1311,8 +1311,14 @@ def main():
     ap.add_argument("--scale", type=float, default=1.0,
                     help="셀 안 모델 전체 크기 배율(기본 1.0). >1 크게 · <1 작게.")
     ap.add_argument("--elev", type=float, default=30.0, help="카메라 고각(2:1=30°)")
-    ap.add_argument("--shading", choices=["eevee", "texture"], default="eevee",
-                    help="렌더 셰이딩. eevee=PBR 3점 조명(기본) · texture=WORKBENCH TEXTURE")
+    ap.add_argument("--shading", choices=["eevee", "texture", "chrome"], default="eevee",
+                    help="렌더 셰이딩. eevee=PBR 3점 조명(기본) · texture=WORKBENCH TEXTURE · "
+                         "chrome=WORKBENCH MATCAP(크롬/거울 금속 갑옷 × 텍스처 색). "
+                         "🛑 크롬은 머티리얼 metallic=1 로는 절대 안 나온다(texture 는 무시, "
+                         "eevee 는 비출 환경이 없어 새까맣게 렌더) → matcap 이 유일한 경로")
+    ap.add_argument("--chrome-matcap", default="fullmetal.exr",
+                    help="--shading chrome 이 쓸 Blender 내장 matcap "
+                         "(fullmetal=크롬 · metal_carpaint=붉은 금속 · metal_bronze=청동)")
     ap.add_argument("--vivid", type=int, default=5, choices=range(1, 10), metavar="1-9",
                     help="색상 진하기(대비)+밝기 강도(1~9, 기본 5). 5=적당히 밝고 진하게, "
                          "9=최대, 1=부스트 없음. 렌더 후 compositor 로 자동 적용.")
@@ -1645,6 +1651,7 @@ def main():
         "loop_actions": (["idle", "walk"] if args.kind == "npc" else ["idle", "walk", "run"]),
         "render_res": render_res, "elev": args.elev, "margin": args.margin,
         "scale": args.scale, "shading": args.shading,
+        "chrome_matcap": args.chrome_matcap,
         "color_level": int(args.vivid),
         "png_colors": png_colors, "draft": args.draft,
         "weapon": (os.path.abspath(args.weapon) if args.weapon else None),
@@ -1673,7 +1680,10 @@ def main():
     mode = "packed atlas (TexturePacker)" if args.texture_pack else f"grid sheet (균일 {cell})"
     print(f"  산출 방식  : {mode}")
     print(f"  출력 폴더  : {rel_folder}/{name}.png" + ("  + .atlas" if args.texture_pack else ""))
-    print(f"  셰이딩     : {args.shading}" + ("  (PBR 3점 조명)" if args.shading == "eevee" else "  (WORKBENCH TEXTURE)"))
+    _shading_desc = {"eevee": "  (PBR 3점 조명)",
+                     "texture": "  (WORKBENCH TEXTURE)",
+                     "chrome": f"  (WORKBENCH MATCAP {args.chrome_matcap} × TEXTURE — 크롬)"}
+    print(f"  셰이딩     : {args.shading}" + _shading_desc.get(args.shading, ""))
     print(f"  색상 강도  : vivid={args.vivid}/9  (대비+밝기 부스트, 5=중간)")
     print(f"  컬러 압축  : " + ("256색 양자화(~80%↓, 육안 동일)" if args.color_compression else "무손실 RGBA"))
     print(f"  cell 크기  : {cell}px   렌더 {render_res}px" + ("  ⚡draft" if args.draft else ""))

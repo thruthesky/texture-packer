@@ -67,8 +67,26 @@ ACTION_SCALES  = cfg.get("action_scales", {}) or {}
 CELL_PX        = int(cfg["size"])
 MEASURE_PATH   = cfg.get("measure_path")             # body_ratio/foot_anchor 측정 결과 저장 경로
 # 셰이딩 모드: "eevee"(기존 PBR 조명) | "texture"(WORKBENCH TEXTURE — metallic/갑옷 자산을
-# 밝고 텍스처 색 그대로. EEVEE 가 raytracing 미사용 시 금속을 검게 렌더하는 문제 회피).
+# 밝고 텍스처 색 그대로. EEVEE 가 raytracing 미사용 시 금속을 검게 렌더하는 문제 회피)
+# | "chrome"(WORKBENCH MATCAP — 크롬/거울 금속 갑옷. 아래 §크롬 참조).
+#
+# ── §크롬(chrome) 셰이딩 — 왜 matcap 인가 (2026-07-16, 실측) ──────────────
+# 크롬은 *색* 이 아니라 *환경을 비추는 거울* 이다. 따라서 머티리얼의 metallic=1 로는 이 파이프라인
+# 에서 절대 크롬이 나오지 않는다 — 두 기존 경로 모두에서 실패한다(실측 렌더로 확인):
+#   · texture(WORKBENCH TEXTURE): 머티리얼 노드 그래프를 통째로 무시하고 raw 이미지 텍스처만
+#     렌더 → metallic 이 조용히 버려짐. 변화 없음.
+#   · eevee: metallic 을 읽지만 이 씬의 world 는 flat grey(strength 0.25)에 HDRI 가 없다 →
+#     비출 환경이 없는 거울 = 새까맣게 렌더(raytracing 을 켜고 world 를 밝혀도 여전히 검음).
+# → matcap 은 view-space 노멀로 셰이딩하므로 반사 환경도, 베이크도, 텍스처 편집도 필요 없다.
+#   Blender 내장 'fullmetal.exr' 이 곧 크롬이며, view-space 라 16방향 전부 자동으로 일관된다.
+#   Tripo3D UV atlas 가 수천 조각으로 파편화돼 있어도 UV 와 무관하게 동작한다(마스킹 불필요).
+# color_type='TEXTURE' 를 유지하므로 matcap 금속감 × 텍스처 색 → 파란 바이저·금색 검이 살아
+# 있는 "크롬 갑옷"이 된다(color_type='SINGLE' 은 순수 거울이지만 텍스처 색을 전부 잃는다).
 SHADING        = cfg.get("shading", "eevee")
+# chrome 모드에서 쓸 matcap 이름(Blender 내장 studio_light). fullmetal=크롬/거울.
+CHROME_MATCAP  = cfg.get("chrome_matcap", "fullmetal.exr")
+# WORKBENCH 계열 = texture · chrome (EEVEE 가 아닌 모드). 아래 분기에서 공통으로 쓴다.
+IS_WORKBENCH   = SHADING in ("texture", "chrome")
 # 색상 진하기(대비)+밝기 강도 1~9(기본 5). 렌더 결과를 compositor BrightContrast 로 후처리해
 # 자동으로 밝고 진하게 만든다(WORKBENCH/EEVEE 무관, 알파 통과). 5=적당한 부스트, 9=최대, 1=무보정.
 COLOR_LEVEL    = int(cfg.get("color_level", 5))
@@ -689,7 +707,7 @@ def _emission_strength(bsdf):
     except Exception:
         return 0.0
 
-if SHADING == "texture":
+if IS_WORKBENCH:
     _glow_fixed = []
     for _mat in bpy.data.materials:
         _bsdf = _principled(_mat)
@@ -722,13 +740,25 @@ if SHADING == "texture":
 
 # ── 렌더 설정 (SHADING 모드 분기) ─────────────────────────────────────
 scene = bpy.context.scene
-if SHADING == "texture":
+if IS_WORKBENCH:
     # WORKBENCH + TEXTURE: 텍스처 색을 밝고 일관되게(조명 의존 적게) 표시.
     # EEVEE 가 metallic/PBR(갑옷·로봇)에서 raytracing 미사용 시 금속을 검게 렌더하는
     # 문제를 회피 → 원본 모델 색 그대로. (Tripo3D 등 PBR 캐릭터 sprite 에 권장)
     scene.render.engine = "BLENDER_WORKBENCH"
     sh = scene.display.shading
-    sh.light = "STUDIO"; sh.color_type = "TEXTURE"
+    if SHADING == "chrome":
+        # 크롬: matcap 금속 반사 × 텍스처 색(§크롬 참조). STUDIO 대신 MATCAP 조명.
+        sh.light = "MATCAP"; sh.color_type = "TEXTURE"
+        try:
+            sh.studio_light = CHROME_MATCAP
+        except Exception as _e:
+            # 내장 matcap 이름이 Blender 버전에 따라 없으면 STUDIO 로 안전 폴백(렌더는 계속).
+            print(f"####CHROME_MATCAP_FAIL {CHROME_MATCAP!r}: {_e} → STUDIO 폴백")
+            sh.light = "STUDIO"
+        else:
+            print(f"####CHROME matcap={CHROME_MATCAP!r} × TEXTURE")
+    else:
+        sh.light = "STUDIO"; sh.color_type = "TEXTURE"
     sh.show_shadows = False
     sh.show_cavity = not DRAFT; sh.cavity_type = "WORLD"  # 패널 경계 음영(평면 방지). draft 는 끔.
     # AA: 일반은 "8"(512→256→128 다운샘플이 추가 AA 제공하므로 16 불필요). draft 는 끔(최고속).
