@@ -73,7 +73,7 @@ Per-action character override:
     ./scripts/sheet_preview.py --character game-assets/characters/male.fbx --name male \
       --animations game-assets/animations/default --character-attack game-assets/characters/male_v2.fbx
 """
-import argparse, glob, json, os, subprocess, sys, shutil, time
+import argparse, glob, importlib.util, json, os, subprocess, sys, shutil, time, types
 
 # Force stdout/stderr to UTF-8 so unicode output does not die with UnicodeEncodeError on
 # Windows consoles (cp1252/cp949). Harmless no-op on macOS (already UTF-8).
@@ -114,6 +114,16 @@ SCALE_PROMPT_DEFAULTS = {"idle": 1.0, "walk": 0.9, "run": 0.9, "attack": 0.8, "h
 TEXTURE_LIMIT = 8192
 SUPPORTED_EXT = (".fbx", ".glb", ".gltf")
 CHAR_EXT = SUPPORTED_EXT + (".blend",)
+
+# --full pack coverage — production-like frame counts (sheet-win.py pc DEFAULT_FRAMES), used only
+# with --pack --full to compare a full 16-direction atlas against the fast 4-dir/3-frame preview.
+FULL_FRAMES = {"idle": 8, "walk": 12, "run": 12, "attack": 16, "hit": 8, "death": 8}
+
+# Reuse the production packer's TexturePacker helpers (single source of truth) rather than copying
+# ~200 lines that would silently drift. Windows -> sheet-win.py, else sheet.py; both guard main() so
+# importing runs only defs/constants. Imported lazily (only on --pack) via _packer().
+_PACKER_SRC = os.path.join(HERE, "sheet-win.py" if IS_WINDOWS else "sheet.py")
+_PACKER_MOD = None
 
 # Mapping production helper -> auto-generated preview helper (4 directions allowed).
 _RENDER_SRC = os.path.join(HERE, "_sheet_render.py")
@@ -448,6 +458,116 @@ def parse_size(s):
     return int(s)
 
 
+def str2bool(v):
+    """Parse --pack/--rotation/--strip-* string true/false (same contract as sheet-win.py)."""
+    if isinstance(v, bool):
+        return v
+    s = str(v).strip().lower()
+    if s in ("true", "1", "yes", "y", "on"):
+        return True
+    if s in ("false", "0", "no", "n", "off"):
+        return False
+    raise argparse.ArgumentTypeError(f"expected true/false but got: {v!r}")
+
+
+def _packer():
+    """Lazily import + cache the platform packer module (sheet-win.py / sheet.py). main() is guarded
+    in both, so exec_module only runs defs/constants (its only side effect is a cheap ROOT probe)."""
+    global _PACKER_MOD
+    if _PACKER_MOD is None:
+        spec = importlib.util.spec_from_file_location("_laryen_packer", _PACKER_SRC)
+        _PACKER_MOD = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_PACKER_MOD)
+    return _PACKER_MOD
+
+
+def _report_packed(atlas):
+    """Parse the packed .atlas for a concise report: (page-size string, region count, rotated count)."""
+    size_line, total, rotated = "", 0, 0
+    try:
+        with open(atlas, encoding="utf-8") as f:
+            for ln in f:
+                s = ln.strip()
+                if s.startswith("size:") and not size_line:
+                    size_line = s[len("size:"):].strip()
+                elif s.startswith("rotate:"):
+                    total += 1
+                    if "true" in s:
+                        rotated += 1
+    except OSError:
+        pass
+    return size_line, total, rotated
+
+
+def _pack_preview_atlas(name, frames_dir, outputs, sheet_out_dir, action_scales, cell, render_res, args):
+    """Pack the already-rendered preview frames into <name>.atlas + <name>.png (TexturePacker),
+    reusing the production packer functions. This is a preview/test path: NO actor-rotate validation
+    guard and NO pubspec/assets change — output stays in the preview work folder. Rotated frames
+    misalign actor feet in the real game (accepted here). Mirrors sheet-win.py's pack step order
+    (align feet -> stash _foot masks -> write pack.json -> pack -> Y-offset fix -> action-scale meta)."""
+    P = _packer()
+    print("\n[2/2] Packing preview atlas with TexturePacker ...")
+    if not os.path.isdir(frames_dir) or not any(f.endswith(".png") for f in os.listdir(frames_dir)):
+        sys.exit(f"No frame PNGs to pack: {frames_dir}")
+    python_bin = resolve_python(args.python_bin)
+    # The atlas path skips the grid builder's foot alignment, so align here (as sheet-win.py does).
+    # Not idempotent -> skip on --build-only (frames were already aligned by the prior render).
+    if not args.build_only:
+        P.align_frames_feet(frames_dir, python_bin)
+    java = P.find_java(args.java_bin)
+    print(f"  Java       : {java}")
+    classpath = P.ensure_packer_classpath(args.packer_cp)
+    # Keep _foot alignment masks out of the pack (build-only helper frames, not runtime regions).
+    foot_dir = os.path.join(frames_dir, "_foot")
+    foot_stash = os.path.join(outputs, ".foot_stash")
+    foot_stashed = False
+    if os.path.isdir(foot_dir):
+        if os.path.isdir(foot_stash):
+            shutil.rmtree(foot_stash)
+        shutil.move(foot_dir, foot_stash)
+        foot_stashed = True
+    # Shim carrying exactly what write_pack_json reads (avoids bolting these onto the real args ns).
+    scale_frames = (cell / render_res) if render_res else 1.0
+    shim = types.SimpleNamespace(
+        strip_x_whitespaces=bool(args.strip_x_whitespaces),
+        strip_y_whitespaces=bool(args.strip_y_whitespaces),
+        rotation=bool(args.rotation),
+        pot=False, max_page_w=TEXTURE_LIMIT, max_page_h=TEXTURE_LIMIT,
+        scale_frames=scale_frames, fast=True,
+    )
+    try:
+        _pack_json, settings = P.write_pack_json(frames_dir, shim)
+        print(f"  settings   : rotation={settings['rotation']} "
+              f"maxPage={settings['maxWidth']}x{settings['maxHeight']} "
+              f"scale={settings['scale'][0]} fast={settings['fast']} "
+              f"stripX={settings['stripWhitespaceX']} stripY={settings['stripWhitespaceY']}")
+        os.makedirs(sheet_out_dir, exist_ok=True)
+        P.run_texture_packer(java, classpath, frames_dir, sheet_out_dir, name, args.verbose)
+    finally:
+        if foot_stashed:
+            shutil.move(foot_stash, foot_dir)   # restore for a later --build-only reuse
+    atlas = os.path.join(sheet_out_dir, name + ".atlas")
+    pages = sorted(glob.glob(os.path.join(sheet_out_dir, name + "*.png")))
+    if not os.path.isfile(atlas) or not pages:
+        sys.exit(f"No packing output (atlas={atlas}, pages={pages}). Re-run with --verbose.")
+    # Y-trim: convert libGDX bottom-left offsetY to flame top-left (harmless no-op when strip_y off).
+    if args.strip_y_whitespaces:
+        P.fix_offset_y(atlas)
+    # Per-action generation scale -> .atlas header meta (runtime restores 1/scale display size).
+    P.inject_action_scales(atlas, action_scales)
+    size_line, nreg, nrot = _report_packed(atlas)
+    tb = sum(os.path.getsize(p) for p in pages)
+    print(f"  OK packed preview atlas -> {atlas}")
+    print(f"     coverage {'16-dir full (sheet-win-like)' if args.full else '4-dir preview'} · "
+          f"page(s) {len(pages)} · size {size_line} · regions {nreg} · "
+          f"rotated {nrot} ({'rotation ON' if args.rotation else 'rotation OFF'})")
+    for p in pages:
+        print(f"     page: {p}  ({os.path.getsize(p) / 1e6:.1f}MB)")
+    print(f"     total {tb / 1e6:.1f}MB")
+    print("     NOTE: preview atlas — no actor-rotate guard, no pubspec/assets change. "
+          "Rotated frames float actor feet in the real game (fine for eyeballing/compare).")
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="FBX/GLB -> **4-direction 3-frame PREVIEW** sprite sheet (big 384 cell · human-check only · macOS+Windows)",
@@ -471,8 +591,8 @@ def main():
                     help="Output sprite/file name (preview only — no pc/npc/mob category). "
                          "Preview output is outputs/<name>_preview/<name>.png. (--kind is a "
                          "deprecated alias kept for backward compatibility.)")
-    ap.add_argument("--cell-size", "--size", dest="cell_size", default=PREVIEW_CELL_DEFAULT,
-                    help=f"Cell pixel size (preview default {PREVIEW_CELL_DEFAULT} — large preview). Sum(frames)*cell <= 8192")
+    ap.add_argument("--cell-size", "--size", dest="cell_size", default=None,
+                    help=f"Cell pixel size (default {PREVIEW_CELL_DEFAULT} preview · 128 with --full). Sum(frames)*cell <= 8192")
     ap.add_argument("--k", type=float, default=128.0,
                     help="K = target on-screen body height px. display = K/body_ratio auto-computed (preview reference)")
     ap.add_argument("--idle", type=int, help=f"idle frame count (defaults to {PREVIEW_FRAMES_PER_ACTION})")
@@ -528,6 +648,28 @@ def main():
                     help="Ultra-fast preview — render_res=cell(1x), AA off. Just to quickly check direction/anim matching.")
     ap.add_argument("--png-colors", type=int, default=256,
                     help="PNG color count (palette quantization). Default 256. 0=lossless RGBA.")
+    # ── packing (opt-in) — emit a TexturePacker .atlas+.png into the preview folder, like sheet-win.py ──
+    ap.add_argument("--pack", "--texture-pack", dest="pack", type=str2bool, nargs="?",
+                    const=True, default=False,
+                    help="Emit a packed <name>.atlas + <name>.png (TexturePacker) into the preview folder, "
+                         "like sheet-win.py, instead of the grid preview. Default false. Output stays in "
+                         "outputs/<name>_preview/ (never assets/, never pubspec).")
+    ap.add_argument("--rotation", type=str2bool, nargs="?", const=True, default=False,
+                    help="Rotation packing (rotate frames 90 deg to save page space). Only used with --pack. "
+                         "Run true and false to compare. NOTE: rotate:true floats actor feet in the real game "
+                         "-- this preview/test path allows it on purpose (sheet-win.py blocks it for actors).")
+    ap.add_argument("--full", action="store_true",
+                    help="Pack the full production layout like sheet-win.py -- 16 directions, production frame "
+                         "counts (idle 8/walk 12/attack 16/hit 8/death 8/run 12), 128 cell -- to compare against "
+                         "the fast 4-dir/3-frame preview. Off = preview defaults (4 dir · 3 frame · 384 cell).")
+    ap.add_argument("--strip-x-whitespaces", type=str2bool, nargs="?", const=True, default=True,
+                    help="Trim left/right transparent margin when packing (smaller atlas width). Default true.")
+    ap.add_argument("--strip-y-whitespaces", type=str2bool, nargs="?", const=True, default=True,
+                    help="Trim top/bottom transparent margin when packing (offsetY corrected top-left). Default true.")
+    ap.add_argument("--java", default="", dest="java_bin",
+                    help="java(.exe) path for TexturePacker (auto-detected if omitted).")
+    ap.add_argument("--packer-cp", default="",
+                    help="gdx-tools classpath override (auto-downloaded to scripts/tools/ if omitted).")
     ap.add_argument("--actions", default=None, help="Action order/list (col layout order). "
                     f"Default = all: {','.join(DEFAULT_ACTIONS)}. Reorders/limits columns.")
     # Preview-only convenience: render just one (or a few) actions so you don't wait for the whole set.
@@ -558,8 +700,12 @@ def main():
     ap.add_argument("--verbose", action="store_true", help="Print full Blender/uv logs (for debugging)")
     args = ap.parse_args()
 
-    cell = parse_size(args.cell_size)
-    directions = PREVIEW_DIRECTIONS   # fixed at 4 directions — preview only
+    # --full switches to sheet-win-like coverage (16 dir · 128 cell); else preview (4 dir · 384 cell).
+    if args.cell_size is not None:
+        cell = parse_size(args.cell_size)
+    else:
+        cell = 128 if args.full else int(PREVIEW_CELL_DEFAULT)
+    directions = 16 if args.full else PREVIEW_DIRECTIONS
 
     # -- resolve which actions to render --------------------------------
     # Precedence: --only-<action> flags / --only  >  --actions  >  all (DEFAULT_ACTIONS).
@@ -662,8 +808,9 @@ def main():
     for a in have:
         assert_mixamo_rig(anim_file(a), f"animation '{a}' ({os.path.basename(anim_file(a))})")
 
-    # (2) frames per action — default to 3 (preview) when omitted. Override only explicitly-set actions.
-    frames = {a: PREVIEW_FRAMES_PER_ACTION for a in DEFAULT_ACTIONS}
+    # (2) frames per action — 3 (preview) or, with --full, production counts. Explicit --<action> wins.
+    _base_frames = FULL_FRAMES if args.full else {a: PREVIEW_FRAMES_PER_ACTION for a in DEFAULT_ACTIONS}
+    frames = {a: _base_frames.get(a, PREVIEW_FRAMES_PER_ACTION) for a in DEFAULT_ACTIONS}
     for a in ("idle", "walk", "run", "attack", "hit", "death"):
         v = getattr(args, a)
         if v is not None:
@@ -764,7 +911,12 @@ def main():
     manifest_png = os.path.join(info_out_dir, name + "_manifest.json")
     print("=" * 64)
     print(f"  platform   : {'Windows' if IS_WINDOWS else ('macOS' if IS_MACOS else sys.platform)}")
-    print(f"  PREVIEW mode — 4 directions (N/E/S/W) · 3 frames per action · big {cell}px cell")
+    _dirdesc = "16 directions (full · sheet-win-like)" if args.full else "4 cardinals (E/S/W/N)"
+    print(f"  PREVIEW mode — {_dirdesc} · {cell}px cell"
+          + ("   [--pack: TexturePacker atlas]" if args.pack else "   [grid preview]"))
+    if args.pack:
+        print(f"  PACK       : rotation={args.rotation} · strip x={args.strip_x_whitespaces} "
+              f"y={args.strip_y_whitespaces} · out={os.path.join(sheet_out_dir, name + '.atlas')} (+ .png)")
     print(f"  actor      : {args.character}  (format {char_ext}, name={args.name})")
     _overrides = [(a, action_character[a]) for a in actions
                   if os.path.abspath(action_character[a]) != os.path.abspath(args.character)]
@@ -775,8 +927,11 @@ def main():
         _rh = f" ref_h={weapon_ref_height}(height-relative)" if weapon_ref_height else " (no size correction)"
         print(f"  weapon     : {args.weapon} -> {weapon_bone}  "
               f"loc={weapon_loc} rot={weapon_rot} scale={weapon_scale}{_rh}")
-    print(f"  sheet out  : {sheet_png}  (preview — NOT production assets/)")
-    print(f"  info out   : {manifest_png} · {name}_layout.md")
+    if args.pack:
+        print(f"  sheet out  : {os.path.join(sheet_out_dir, name + '.atlas')} (+ .png)  (preview atlas — NOT assets/)")
+    else:
+        print(f"  sheet out  : {sheet_png}  (preview — NOT production assets/)")
+        print(f"  info out   : {manifest_png} · {name}_layout.md")
     print(f"  cell size  : {cell} x {cell} px   K(target body height)={args.k:.0f}px -> display=K/body_ratio")
     _shading_desc = {"eevee": "  (PBR 3-point lighting)",
                      "texture": "  (WORKBENCH TEXTURE)",
@@ -865,7 +1020,10 @@ def main():
             print(f"   OK render done — {actual_frames} frames · {_fmt_dur(_r_dt)}"
                   + (f" · {actual_frames / _r_dt:.1f} fps" if _r_dt > 0 else ""))
 
-    if not args.render_only:
+    if not args.render_only and args.pack:
+        _pack_preview_atlas(name, frames_dir, outputs, sheet_out_dir,
+                            action_scales, cell, render_res, args)
+    elif not args.render_only:
         print("\n[2/2] Compositing preview sprite sheet ...")
         uv = shutil.which("uv")
         if uv:
