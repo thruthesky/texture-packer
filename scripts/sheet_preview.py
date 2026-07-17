@@ -510,10 +510,8 @@ def _pack_preview_atlas(name, frames_dir, outputs, sheet_out_dir, action_scales,
     if not os.path.isdir(frames_dir) or not any(f.endswith(".png") for f in os.listdir(frames_dir)):
         sys.exit(f"No frame PNGs to pack: {frames_dir}")
     python_bin = resolve_python(args.python_bin)
-    # The atlas path skips the grid builder's foot alignment, so align here (as sheet-win.py does).
-    # Not idempotent -> skip on --build-only (frames were already aligned by the prior render).
-    if not args.build_only:
-        P.align_frames_feet(frames_dir, python_bin)
+    # Foot alignment already happened in the render loop (pack path) — do NOT re-align here
+    # (align_feet is not idempotent). On --build-only, frames were aligned by the prior --pack render.
     java = P.find_java(args.java_bin)
     print(f"  Java       : {java}")
     classpath = P.ensure_packer_classpath(args.packer_cp)
@@ -555,6 +553,12 @@ def _pack_preview_atlas(name, frames_dir, outputs, sheet_out_dir, action_scales,
         P.fix_offset_y(atlas)
     # Per-action generation scale -> .atlas header meta (runtime restores 1/scale display size).
     P.inject_action_scales(atlas, action_scales)
+    # Color compression (256-color quantize) in-place — disk only, matches the production build.
+    if args.color_compression:
+        print("  [3] Compressing page PNG(s) ... (q256 · in-place)")
+        for p, before, after in P.compress_pages(pages, python_bin, colors=256):
+            pct = 100 * (before - after) / before if before else 0
+            print(f"     {os.path.basename(p)}  {before / 1e6:.1f}MB -> {after / 1e6:.1f}MB  ({pct:.0f}% smaller)")
     size_line, nreg, nrot = _report_packed(atlas)
     tb = sum(os.path.getsize(p) for p in pages)
     print(f"  OK packed preview atlas -> {atlas}")
@@ -670,6 +674,18 @@ def main():
                     help="java(.exe) path for TexturePacker (auto-detected if omitted).")
     ap.add_argument("--packer-cp", default="",
                     help="gdx-tools classpath override (auto-downloaded to scripts/tools/ if omitted).")
+    ap.add_argument("--color-compression", type=str2bool, nargs="?", const=True, default=True,
+                    help="256-color FASTOCTREE quantization of the packed page PNG (disk only, not RAM). "
+                         "Default true. Only used with --pack.")
+    ap.add_argument("--auto-fit-scale", action="store_true",
+                    help="Auto-lower each action's scale until nothing clips the cell (reuses verify_cells.py; "
+                         "up to 6 re-render passes, 0.667 floor) -- same convergence as sheet-win.py, which is "
+                         "why production scales are e.g. attack 0.84 not 1.0. Ignores --scale-<action>. Only with --pack.")
+    ap.add_argument("--auto", action="store_true",
+                    help="Mirror sheet-win.py's production preset for a side-by-side compare: --pack + "
+                         "--auto-fit-scale + --color-compression true (vivid 5 / eevee are already the preview "
+                         "defaults). Rotation stays false (production's actor setting) unless you pass --rotation "
+                         "true. Explicit flags override. Pair with --full for the closest match to production.")
     ap.add_argument("--actions", default=None, help="Action order/list (col layout order). "
                     f"Default = all: {','.join(DEFAULT_ACTIONS)}. Reorders/limits columns.")
     # Preview-only convenience: render just one (or a few) actions so you don't wait for the whole set.
@@ -699,6 +715,16 @@ def main():
     ap.add_argument("--build-only", action="store_true")
     ap.add_argument("--verbose", action="store_true", help="Print full Blender/uv logs (for debugging)")
     args = ap.parse_args()
+
+    # --auto: mirror sheet-win.py's production preset so the preview atlas is directly comparable to
+    # the production build. Forces pack + auto-fit + compression; leaves rotation false (production's
+    # actor setting) and vivid/eevee at their preview defaults. Explicit flags already parsed win —
+    # e.g. `--auto --rotation true` for the rotated comparison, `--auto --full` for the closest match.
+    if args.auto:
+        args.pack = True
+        args.auto_fit_scale = True
+        if not any(a == "--color-compression" or a.startswith("--color-compression=") for a in sys.argv):
+            args.color_compression = True
 
     # --full switches to sheet-win-like coverage (16 dir · 128 cell); else preview (4 dir · 384 cell).
     if args.cell_size is not None:
@@ -819,9 +845,12 @@ def main():
     # Per-action generation scale — same contract as sheet.py. The render helper
     # (_sheet_render.py -> _sheet_preview_render.py) reads cfg["action_scales"] and uses
     # ACTION_SCALES.get(action, global scale) per action, so an unset action falls back to --scale.
+    # 🛑 --auto-fit-scale starts every action at the global --scale (default 1.0) and lets the
+    # re-render loop lower it, so per-action --scale-<action> is ignored under auto-fit (mirrors
+    # sheet-win.py). Without auto-fit, per-action overrides apply as before.
     action_scales = {}
     for a in actions:
-        ov = getattr(args, f"scale_{a}", None)
+        ov = None if args.auto_fit_scale else getattr(args, f"scale_{a}", None)
         action_scales[a] = float(ov) if ov is not None else float(args.scale)
 
     if args.render_res:
@@ -915,8 +944,11 @@ def main():
     print(f"  PREVIEW mode — {_dirdesc} · {cell}px cell"
           + ("   [--pack: TexturePacker atlas]" if args.pack else "   [grid preview]"))
     if args.pack:
-        print(f"  PACK       : rotation={args.rotation} · strip x={args.strip_x_whitespaces} "
-              f"y={args.strip_y_whitespaces} · out={os.path.join(sheet_out_dir, name + '.atlas')} (+ .png)")
+        _preset = "  · AUTO(production preset)" if args.auto else ""
+        print(f"  PACK       : rotation={args.rotation} · auto-fit={args.auto_fit_scale} · "
+              f"color-compress={args.color_compression} · strip x={args.strip_x_whitespaces} "
+              f"y={args.strip_y_whitespaces}{_preset}")
+        print(f"               out={os.path.join(sheet_out_dir, name + '.atlas')} (+ .png)")
     print(f"  actor      : {args.character}  (format {char_ext}, name={args.name})")
     _overrides = [(a, action_character[a]) for a in actions
                   if os.path.abspath(action_character[a]) != os.path.abspath(args.character)]
@@ -959,14 +991,29 @@ def main():
     print(f"  Blender    : {blender}")
 
     if not args.build_only:
+        P = _packer() if args.pack else None            # packer (align/verify/floor) — pack path only
+        _pybin = resolve_python(args.python_bin)
         multipass = len(render_passes) > 1
-        for pi, (pchar, pacts, pcfg_path) in enumerate(render_passes):
-            pass_frames = directions * sum(frames.get(a, PREVIEW_FRAMES_PER_ACTION) for a in pacts)
-            tag = (f"  (pass {pi + 1}/{len(render_passes)} · {os.path.basename(pchar)} "
-                   f"· {', '.join(pacts)})" if multipass else "")
-            print(f"\n[1/2] Blender rendering (4-direction preview){tag} ... "
+        _fit, _max_fit = 0, 6
+        _render_only = None    # None = render every action; else the clipped subset to re-render
+        while True:
+          for pi, (pchar, pacts, pcfg_path) in enumerate(render_passes):
+            pass_acts = pacts if _render_only is None else [a for a in pacts if a in _render_only]
+            if not pass_acts:
+                continue   # this pass has no action to (re)render this round
+            # (Re)write the pass cfg with the current (possibly auto-fit-lowered) scales and a scoped
+            # only_actions so an auto-fit pass re-renders just the clipped action(s), not the whole set.
+            _pcfg = json.load(open(pcfg_path))
+            _pcfg["action_scales"] = action_scales
+            _pcfg["only_actions"] = pass_acts
+            json.dump(_pcfg, open(pcfg_path, "w"), indent=2)
+            pass_frames = directions * sum(frames.get(a, PREVIEW_FRAMES_PER_ACTION) for a in pass_acts)
+            tag = (f"  (pass {pi + 1}/{len(render_passes)} · {os.path.basename(pchar)})" if multipass else "")
+            fittag = f"  [auto-fit {_fit}/{_max_fit}: {', '.join(pass_acts)}]" if _fit else ""
+            _dirtxt = "16-dir" if directions == 16 else "4-dir"
+            print(f"\n[1] Blender rendering ({_dirtxt} preview){tag}{fittag} ... "
                   f"({pass_frames} frames = {directions} dir × "
-                  f"{sum(frames.get(a, PREVIEW_FRAMES_PER_ACTION) for a in pacts)} frames)")
+                  f"{sum(frames.get(a, PREVIEW_FRAMES_PER_ACTION) for a in pass_acts)} frames)")
             t_r0 = time.monotonic()
             proc = subprocess.Popen(
                 [blender, "-b", "-P", _RENDER_DST, "--", pcfg_path],
@@ -1000,9 +1047,9 @@ def main():
                 elif any(k in line for k in ("Error", "Traceback", "Exception", "Failed")):
                     errs.append(line)
             proc.wait()
-            # Count only this pass's frames (the base pass's frames coexist in frames_dir).
+            # Count only this round's frames (other actions' frames coexist in frames_dir).
             pass_pngs = ([f for f in os.listdir(frames_dir)
-                          if f.endswith(".png") and f.rsplit("_", 2)[0] in pacts]
+                          if f.endswith(".png") and f.rsplit("_", 2)[0] in pass_acts]
                          if os.path.isdir(frames_dir) else [])
             actual_frames = len(pass_pngs)
             _r_dt = time.monotonic() - t_r0
@@ -1019,6 +1066,38 @@ def main():
                 sys.exit("render failed")
             print(f"   OK render done — {actual_frames} frames · {_fmt_dur(_r_dt)}"
                   + (f" · {actual_frames / _r_dt:.1f} fps" if _r_dt > 0 else ""))
+
+          # ── foot alignment + auto-fit (pack path only; the grid builder aligns internally) ──
+          if not args.pack:
+              break
+          # Align just the actions rendered this round (align_feet is NOT idempotent — re-aligning a
+          # kept action double-shifts it). _render_only None on the first round = align all.
+          P.align_frames_feet(frames_dir, _pybin, only_actions=(list(_render_only) if _render_only else None))
+          if not args.auto_fit_scale:
+              break
+          # Detect cell clipping on the ALIGNED frames (align can push a weapon tip out) and step the
+          # clipped actions' scale down until nothing clips — same convergence as sheet-win.py --auto.
+          _rec = P.verify_cells_and_report(frames_dir, _pybin,
+                                           pass_label=f"render{'' if not _fit else f'/auto-fit {_fit}'}")
+          if not _rec:   # None (check failed) or {} (no clipping) -> done
+              break
+          if _fit >= _max_fit:
+              print(f"   WARN: still clipping after {_max_fit} auto-fit passes — see recommendations above")
+              break
+          _changed, _next = False, []
+          for a, s in _rec.items():
+              cur = float(action_scales.get(a, args.scale))
+              target = max(P.SCALE_FLOOR, round(min(s, cur - P.AUTOFIT_STEP), 2))
+              if target < cur - 1e-6:
+                  action_scales[a] = target
+                  print(f"   auto-fit: scale-{a} {cur:g} -> {target:g} (cell x{1.0 / target:.3f})")
+                  _changed = True
+                  _next.append(a)
+          if not _changed:
+              print(f"   WARN: hit scale floor ({P.SCALE_FLOOR}) — remaining clip needs margin/scale tuning")
+              break
+          _render_only = set(a for a in actions if a in set(_next))
+          _fit += 1
 
     if not args.render_only and args.pack:
         _pack_preview_atlas(name, frames_dir, outputs, sheet_out_dir,
