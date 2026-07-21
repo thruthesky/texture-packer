@@ -31,11 +31,11 @@ Self-contained design (shared production helpers untouched):
 Usage examples:
   # macOS (line continuation is backslash \):
   ./scripts/sheet_preview.py --character game-assets/characters/male.fbx --name male \
-    --animations game-assets/animations/default
+    --animations default
 
   # Windows PowerShell (line continuation is backtick `):
   py scripts\sheet_preview.py --character game-assets\characters\male.fbx --name male `
-    --animations game-assets\animations\default
+    --animations default
 
   # Make the cell even bigger (e.g. 512) — watch the 8192 limit depending on col count
   ./scripts/sheet_preview.py --character game-assets/monsters/demonic_king.fbx \
@@ -45,6 +45,8 @@ Options are identical to the production sheet except for these defaults:
   --directions  : fixed at 4 (not changeable — preview is 4-direction only).
   --size        : 384 (instead of the production render cell — a large preview).
   --idle/--walk/--run/--attack/--death : default to **3** each when omitted (instead of production 8~12).
+  --animations  : accepts a variant NAME (e.g. `default` -> game-assets/animations/default) or a path,
+                  same as sheet.py/sheet-win.py — you no longer need the game-assets/animations/ prefix.
 
 Preview only specific actions (skip rendering the whole set):
   --only-attack                 render just the attack action (combine e.g. --only-attack --only-walk)
@@ -100,6 +102,60 @@ def _fmt_dur(seconds):
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _find_project_root(here):
+    """Find the laryen project root (same logic as sheet.py/sheet-win.py). This script lives at
+    .claude/skills/texture-packer/scripts/, so dirname(HERE) is NOT the repo root. Search order:
+    (1) LARYEN_ROOT env, (2) four levels up from the skill, (3) git rev-parse, (4) cwd."""
+    env = os.environ.get("LARYEN_ROOT")
+    if env and os.path.isfile(os.path.join(env, "pubspec.yaml")):
+        return os.path.abspath(env)
+    cand = os.path.abspath(os.path.join(here, "..", "..", "..", ".."))
+    if os.path.isfile(os.path.join(cand, "pubspec.yaml")):
+        return cand
+    try:
+        top = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=here, text=True, stderr=subprocess.DEVNULL).strip()
+        if top and os.path.isfile(os.path.join(top, "pubspec.yaml")):
+            return top
+    except Exception:
+        pass
+    return os.getcwd()
+
+
+# Project root (has game-assets/·pubspec.yaml) — used to resolve --animations variant folders so a
+# short name like `default` works from any cwd (same as sheet.py/sheet-win.py).
+ROOT = _find_project_root(HERE)
+ANIM_ROOT = "game-assets/animations"
+
+
+def list_anim_variants():
+    """Subfolders of game-assets/animations/ (variant names usable as --animations <variant>)."""
+    root = os.path.join(ROOT, ANIM_ROOT)
+    if not os.path.isdir(root):
+        return []
+    return sorted(d for d in os.listdir(root)
+                  if os.path.isdir(os.path.join(root, d)) and not d.startswith("."))
+
+
+def resolve_animations_dir(spec):
+    """Resolve a --animations value (a variant NAME or a path) to a real directory — identical to
+    sheet.py/sheet-win.py so the preview matches production. Order:
+      (1) already a directory (relative to cwd or absolute) -> use it.
+      (2) game-assets/animations/<spec> under the project root (so `--animations default` works).
+      (3) otherwise exit, listing the available variant folders."""
+    if os.path.isdir(spec):
+        return os.path.abspath(spec)
+    cand = os.path.join(ROOT, ANIM_ROOT, spec)
+    if os.path.isdir(cand):
+        return os.path.abspath(cand)
+    variants = list_anim_variants()
+    sys.exit(f"Animation folder not found: {spec}\n"
+             f"   -> {ANIM_ROOT}/ subfolders: {', '.join(variants) or '(none)'}")
+
+
 # Preview defaults — the three axes that differ from the production sheet.
 PREVIEW_DIRECTIONS = 4            # (1) fixed at 4 directions (N/E/S/W cardinals)
 PREVIEW_FRAMES_PER_ACTION = 3     # (2) fixed at 3 frames per action (when omitted)
@@ -139,17 +195,17 @@ EXAMPLES = r"""
   4 dir(N/E/S/W) x 3 frame x 6 action = 18 col x 4 row. Default 384px -> 6912x1536.
   Output -> outputs/<name>_preview/<name>.png (does NOT pollute production assets/)
 
-  # macOS — Mixamo-rig character FBX + Mixamo animation folder
+  # macOS — Mixamo-rig character FBX + Mixamo animation folder (variant name resolves under game-assets/animations/)
   ./scripts/sheet_preview.py --character game-assets/characters/male.fbx --name male \
-    --animations game-assets/animations/default
+    --animations default
 
   # Windows PowerShell — same
   py scripts\sheet_preview.py --character game-assets\characters\male.fbx --name male `
-    --animations game-assets\animations\default
+    --animations default
 
   # Bigger cell (512) — with 18 cols that's 9216 > 8192, so reduce actions via --actions or keep 384
   ./scripts/sheet_preview.py --character game-assets/monsters/demonic_king.fbx \
-    --name demonic_king --animations game-assets/animations/default --shading texture --actions idle,walk,attack --size 512
+    --name demonic_king --animations default --shading texture --actions idle,walk,attack --size 512
 """
 
 
@@ -592,7 +648,9 @@ def main():
                         help=f"Override the model used for the '{_act}' action only "
                              f"(default = --character). Same format as --character.")
     ap.add_argument("--animations", required=True,
-                    help="External Mixamo animation folder ({action}.fbx/.glb) — *required*. Matching bones -> applied directly.")
+                    help="Mixamo animation source ({action}.fbx/.glb) — *required*. Accepts a variant "
+                         "NAME (e.g. `default` -> game-assets/animations/default) or a path, same as "
+                         "sheet.py/sheet-win.py. Matching bones -> applied directly.")
     ap.add_argument("--name", "--kind", dest="name", required=True,
                     help="Output sprite/file name (preview only — no pc/npc/mob category). "
                          "Preview output is outputs/<name>_preview/<name>.png. (--kind is a "
@@ -819,9 +877,8 @@ def main():
             else float(prof.get("scale", 1.0))
         weapon_ref_height = float(prof.get("ref_height", 0.0))
 
-    # -- animation source --
-    if not os.path.isdir(args.animations):
-        sys.exit(f"Animation folder not found: {args.animations}")
+    # -- animation source -- accept a variant NAME (e.g. `default`) or a path, same as sheet.py.
+    args.animations = resolve_animations_dir(args.animations)
     def anim_file(a):
         return next((os.path.join(args.animations, a + e) for e in SUPPORTED_EXT
                      if os.path.isfile(os.path.join(args.animations, a + e))), None)
