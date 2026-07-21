@@ -44,7 +44,7 @@ Usage examples:
 Options are identical to the production sheet except for these defaults:
   --directions  : fixed at 4 (not changeable — preview is 4-direction only).
   --size        : 384 (instead of the production render cell — a large preview).
-  --idle/--walk/--run/--attack/--hit/--death : default to **3** each when omitted (instead of production 8~12).
+  --idle/--walk/--run/--attack/--death : default to **3** each when omitted (instead of production 8~12).
 
 Preview only specific actions (skip rendering the whole set):
   --only-attack                 render just the attack action (combine e.g. --only-attack --only-walk)
@@ -104,20 +104,22 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PREVIEW_DIRECTIONS = 4            # (1) fixed at 4 directions (N/E/S/W cardinals)
 PREVIEW_FRAMES_PER_ACTION = 3     # (2) fixed at 3 frames per action (when omitted)
 PREVIEW_CELL_DEFAULT = "384"      # (3) bigger cell (image) — 384 vs. the production render cell
-DEFAULT_ACTIONS = ["idle", "walk", "attack", "hit", "death", "run"]   # col order
+# hit(피격) removed 2026-07-20 to mirror the production sheet.py/sheet-win.py action list
+# (hit pose is never visible in-game — flash/particle/sound cover it — so it only bloated the atlas).
+DEFAULT_ACTIONS = ["idle", "walk", "attack", "death", "run"]   # col order (hit removed)
 # Suggested per-action generation scale (matches sheet.py SCALE_PROMPT_DEFAULTS).
 # Only applied when the matching --scale-<action> is passed — the preview never *prompts* for it
 # (it is a non-interactive eyeball tool). Passing --scale-attack 0.8 lets the preview reflect the
 # same framing production will bake, so what you eyeball matches the real atlas. <1 shrinks the
 # model in the cell (weapon/motion clipping avoidance); the preview shows exactly that shrink.
-SCALE_PROMPT_DEFAULTS = {"idle": 1.0, "walk": 0.9, "run": 0.9, "attack": 0.8, "hit": 0.9, "death": 1.0}
+SCALE_PROMPT_DEFAULTS = {"idle": 1.0, "walk": 0.9, "run": 0.9, "attack": 0.8, "death": 1.0}
 TEXTURE_LIMIT = 8192
 SUPPORTED_EXT = (".fbx", ".glb", ".gltf")
 CHAR_EXT = SUPPORTED_EXT + (".blend",)
 
 # --full pack coverage — production-like frame counts (sheet-win.py pc DEFAULT_FRAMES), used only
 # with --pack --full to compare a full 16-direction atlas against the fast 4-dir/3-frame preview.
-FULL_FRAMES = {"idle": 8, "walk": 12, "run": 12, "attack": 16, "hit": 8, "death": 8}
+FULL_FRAMES = {"idle": 8, "walk": 12, "run": 12, "attack": 16, "death": 8}
 
 # Reuse the production packer's TexturePacker helpers (single source of truth) rather than copying
 # ~200 lines that would silently drift. Windows -> sheet-win.py, else sheet.py; both guard main() so
@@ -603,7 +605,6 @@ def main():
     ap.add_argument("--walk", type=int, help=f"walk frame count (defaults to {PREVIEW_FRAMES_PER_ACTION})")
     ap.add_argument("--run", type=int, help=f"run frame count (defaults to {PREVIEW_FRAMES_PER_ACTION})")
     ap.add_argument("--attack", type=int, help=f"attack frame count (defaults to {PREVIEW_FRAMES_PER_ACTION})")
-    ap.add_argument("--hit", type=int, help=f"hit frame count (defaults to {PREVIEW_FRAMES_PER_ACTION})")
     ap.add_argument("--death", type=int, help=f"death frame count (defaults to {PREVIEW_FRAMES_PER_ACTION})")
     # Per-action generation scale — same as sheet.py. <1 shrinks that action's model inside the cell so
     # the preview matches the framing production will bake (e.g. --scale-attack 0.8 so a swung weapon
@@ -664,7 +665,7 @@ def main():
                          "-- this preview/test path allows it on purpose (sheet-win.py blocks it for actors).")
     ap.add_argument("--full", action="store_true",
                     help="Pack the full production layout like sheet-win.py -- 16 directions, production frame "
-                         "counts (idle 8/walk 12/attack 16/hit 8/death 8/run 12), 128 cell -- to compare against "
+                         "counts (idle 8/walk 12/attack 16/death 8/run 12), 128 cell -- to compare against "
                          "the fast 4-dir/3-frame preview. Off = preview defaults (4 dir · 3 frame · 384 cell).")
     ap.add_argument("--strip-x-whitespaces", type=str2bool, nargs="?", const=True, default=True,
                     help="Trim left/right transparent margin when packing (smaller atlas width). Default true.")
@@ -837,7 +838,7 @@ def main():
     # (2) frames per action — 3 (preview) or, with --full, production counts. Explicit --<action> wins.
     _base_frames = FULL_FRAMES if args.full else {a: PREVIEW_FRAMES_PER_ACTION for a in DEFAULT_ACTIONS}
     frames = {a: _base_frames.get(a, PREVIEW_FRAMES_PER_ACTION) for a in DEFAULT_ACTIONS}
-    for a in ("idle", "walk", "run", "attack", "hit", "death"):
+    for a in ("idle", "walk", "run", "attack", "death"):
         v = getattr(args, a)
         if v is not None:
             frames[a] = v
