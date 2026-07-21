@@ -87,7 +87,7 @@ production 정책(위반 거절):
   # 권장 — Mixamo rig 캐릭터(PC) + 애니 폴더 → packed atlas (기본: 256 render → 160 atlas)
   py scripts\sheet-win.py --kind pc --name male_vector `
     --character game-assets\characters\male_vector.fbx --animations default `
-    --idle 8 --walk 12 --run 12 --attack 16 --hit 8 --death 8
+    --idle 8 --walk 12 --run 12 --attack 16 --death 8
 
   # 몬스터 → assets\mob\demonic_king\...
   py scripts\sheet-win.py --kind mob --name demonic_king `
@@ -188,16 +188,22 @@ DEFAULT_CELL_SIZE_MOB = 128
 RUNTIME_DISPLAY_SIZE = 128
 
 # 단일 통합 grid sheet 는 Σframes×cell (W) × directions×cell (H).
-DEFAULT_FRAMES  = {"idle": 8, "walk": 12, "attack": 16, "hit": 8, "death": 8, "run": 12,
+DEFAULT_FRAMES  = {"idle": 8, "walk": 12, "attack": 16, "death": 8, "run": 12,
                    "look": 8, "talk": 8, "wave": 8}
-DEFAULT_ACTIONS = ["idle", "walk", "attack", "hit", "death", "run"]   # pc col 순서(run 포함)
+# 🛑 hit(피격) 애니메이션 제거(2026-07-20): 게임 플레이 중 hit 포즈가 화면에 사실상 표현되지
+# 않는데(피격 시 white tint flash·파티클 임팩트·타격 사운드가 sprite 포즈를 덮음) atlas 는 hit
+# 8프레임 × 16방향 = 128셀을 캐릭터마다 담아 디스크/번들/RAM(원본 PNG W×H×4)만 키웠다. hit 를
+# 액션 목록에서 빼 재생성하면 그만큼 절감된다. 서버 wire 의 hit EVENT(ActorState=3)는 그대로
+# 두므로(타격 사운드·임팩트·크리티컬 연출 트리거로 계속 사용) 클라는 hit EVENT 를 받아도 sprite
+# 포즈만 idle 로 fallback 한다(actor_animation_set.dart 매핑 수정은 별도 단계).
+DEFAULT_ACTIONS = ["idle", "walk", "attack", "death", "run"]   # pc col 순서(run 포함, hit 제거)
 # mob 기본 행동 — run 제외(대부분 몬스터는 걷기만 하므로 atlas 에서 run 을 빼 디스크 절감).
 # run 이 필요한 몬스터는 대화형 질문에 y 또는 --run N / --actions 로 명시하면 포함된다.
-MOB_ACTIONS     = ["idle", "walk", "attack", "hit", "death"]
+MOB_ACTIONS     = ["idle", "walk", "attack", "death"]
 NPC_ACTIONS = ["idle"]   # 🛑 npc 는 idle 단일 애니메이션만(1방향 고정 서 있기 — 이동/전투 없음, 2026-07-10)
 NPC_IDLE_FRAMES = 24     # npc idle 프레임(셀) 수 — 부드러운 idle 루프(1방향 × 24셀)
 NPC_DIR = "game-assets/npc"   # npc 소스 폴더(폴더별 캐릭터 *.fbx|*.blend + idle.fbx)
-FRAME_OPTION_ACTIONS = ["idle", "walk", "run", "attack", "hit", "death", "look", "talk", "wave"]
+FRAME_OPTION_ACTIONS = ["idle", "walk", "run", "attack", "death", "look", "talk", "wave"]  # hit 제거(2026-07-20)
 # 행동별 *생성 scale* 대화형 질문의 기본 제안값(2026-07-07 사용자 지시). --scale-<action> 을
 # 지정하지 않으면 finalize 가 이 값을 기본 제안으로 개발자에게 물어본다(비대화형이면 이 값 적용).
 # <1 이면 그 행동 셀(캔버스)을 1/scale 로 키워(무기/모션이 128 셀 밖으로 나가는 잘림 방지·body 원본
@@ -206,7 +212,7 @@ FRAME_OPTION_ACTIONS = ["idle", "walk", "run", "attack", "hit", "death", "look",
 # scale 질문 자체를 하지 않는다(scale 1.0 고정).
 # 🛑 기본 전부 1.0 (2026-07-09 셀 확대 전환): 셀 확대는 atlas RAM(iOS OOM)·page 폭(8192 한계)을
 # 키우므로 잘리지 않는 행동까지 무조건 키우지 않는다. 잘리는 행동만 --auto-fit-scale 이 검출해 낮춘다.
-SCALE_PROMPT_DEFAULTS = {"idle": 1.0, "walk": 1.0, "run": 1.0, "attack": 1.0, "hit": 1.0, "death": 1.0}
+SCALE_PROMPT_DEFAULTS = {"idle": 1.0, "walk": 1.0, "run": 1.0, "attack": 1.0, "death": 1.0}
 # --auto-fit-scale 재렌더 시, 권장값이 현재보다 높아도(잘림이 줄어도) 잔여 잘림이면 최소 이만큼
 # 더 낮춰 잘림 0 까지 수렴시킨다(bone 처럼 top 잘림이 커서 1회 권장으로 안 되는 자산 대응).
 AUTOFIT_STEP = 0.06
@@ -287,7 +293,7 @@ Examples (PowerShell — line continuation is backtick `):
   # packed atlas (default) — PC male_vector
   py scripts\sheet-win.py --kind pc --name male_vector `
     --character game-assets\characters\male_vector.fbx --animations default `
-    --idle 8 --walk 12 --run 12 --attack 16 --hit 8 --death 8
+    --idle 8 --walk 12 --run 12 --attack 16 --death 8
 
   # monster
   py scripts\sheet-win.py --kind mob --name demonic_king `
@@ -729,7 +735,7 @@ def prompt_missing(args):
     # 🛑 npc 는 idle 단일(무기 없음·잘림 없음)이라 scale 조정이 불필요 → --scale-idle/walk 질문을
     # 하지 않는다(빈 목록, scale 1.0 고정). auto-fit-scale 이 켜진 경우도 질문 생략(자동 하강).
     scale_actions = ([] if args.auto_fit_scale or args.kind == "npc" else
-                     ["idle", "walk", "run", "attack", "hit", "death"])
+                     ["idle", "walk", "run", "attack", "death"])
     for act in scale_actions:
         if getattr(args, f"scale_{act}") is not None:
             continue  # --scale-<act> 명시 → 질문 생략(그 값 사용)
@@ -1497,7 +1503,7 @@ def main():
                          f"The default combination is {DEFAULT_RENDER_RES}px render → {DEFAULT_CELL_SIZE}px atlas.")
     ap.add_argument("--draft", action="store_true", help="Ultra-fast preview (render_res=cell · AA off)")
     ap.add_argument("--actions", default=None,
-                    help="Action order/list. Default pc/mob=idle,walk,attack,hit,death,run; npc=idle,look,talk,walk,wave")
+                    help="Action order/list. Default pc/mob=idle,walk,attack,death,run; npc=idle,look,talk,walk,wave")
     ap.add_argument("--output", default=None, dest="output_base",
                     help="Base folder to save the resulting atlas/png (default: assets/ at the project root). "
                          "If specified, auto-creates and saves to <output>/<kind>/<name>/<name>.{png,atlas}. "
