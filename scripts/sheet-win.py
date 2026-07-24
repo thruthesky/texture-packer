@@ -1434,6 +1434,10 @@ def main():
     ap.add_argument("--actor", "--character", dest="character", default=None,
                     help="Actor (character/monster) model (.fbx / .glb / .gltf / .blend). Import auto-branches by extension. "
                          "If omitted, interactive selection (from the --kind folder).")
+    ap.add_argument("--blend", default=None,
+                    help="Shortcut for --character game-assets/blend/<name>.blend "
+                         "(e.g. --blend male -> --character game-assets\\blend\\male.blend). The '.blend' extension "
+                         "is optional. Ignored if --character is also given explicitly.")
     ap.add_argument("--kind", default=None, choices=["pc", "mob", "npc"],
                     help="Actor category — pc (player/humanoid), mob (monster), npc (village NPC). Output: assets/<kind>/<name>/.")
     ap.add_argument("--name", default=None,
@@ -1601,6 +1605,19 @@ def main():
     args = ap.parse_args()
     args._texture_pack_explicit = tp_explicit
     args._color_compression_explicit = cc_explicit
+
+    # ── --blend <name>: --character game-assets/blend/<name>.blend 의 단축 표기 ──
+    # '.blend' 확장자는 선택(있어도 되고 없어도 됨). --character 를 함께 명시하면 그 값이 우선하고
+    # --blend 는 무시한다(shortcut 이므로 명시 --character 를 덮지 않는다).
+    if args.blend:
+        _stem = args.blend[:-6] if args.blend.lower().endswith(".blend") else args.blend
+        _blend_path = os.path.join(ROOT, "game-assets", "blend", _stem + ".blend")
+        if args.character:
+            print(f"  ℹ️  --character given -> ignoring --blend {args.blend!r} "
+                  f"({os.path.relpath(_blend_path, ROOT)})")
+        else:
+            args.character = _blend_path
+            print(f"  ℹ️  --blend {args.blend!r} -> --character {os.path.relpath(_blend_path, ROOT)}")
 
     # win 전용 보조 Python 인터프리터 — uv 부재 시 _sheet_build/align_feet/compress_image 실행에 사용.
     python_bin = resolve_python(args.python_bin)
