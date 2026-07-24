@@ -47,6 +47,8 @@ Options are identical to the production sheet except for these defaults:
   --idle/--walk/--run/--attack/--death : default to **3** each when omitted (instead of production 8~12).
   --animations  : accepts a variant NAME (e.g. `default` -> game-assets/animations/default) or a path,
                   same as sheet.py/sheet-win.py — you no longer need the game-assets/animations/ prefix.
+  --blend NAME  : shortcut for --character game-assets/blend/<name>.blend (e.g. --blend male). The
+                  '.blend' extension is optional. --character wins if both are given.
 
 Preview only specific actions (skip rendering the whole set):
   --only-attack                 render just the attack action (combine e.g. --only-attack --only-walk)
@@ -636,10 +638,14 @@ def main():
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         add_help=True)
-    ap.add_argument("--actor", "--character", dest="character", required=True,
-                    help="Actor (character/monster) model (.fbx / .glb / .gltf, mesh+rig). Import branches by extension. "
+    ap.add_argument("--actor", "--character", dest="character", default=None,
+                    help="Actor (character/monster) model (.fbx / .glb / .gltf / .blend, mesh+rig). Import branches by extension. "
                          "This is the *default* model used for every action unless a per-action override "
-                         "(--character-<action>) is given.")
+                         "(--character-<action>) is given. Required unless --blend is given.")
+    ap.add_argument("--blend", default=None,
+                    help="Shortcut for --character game-assets/blend/<name>.blend "
+                         "(e.g. --blend male -> --character game-assets/blend/male.blend). The '.blend' "
+                         "extension is optional. Ignored if --character is given explicitly.")
     # Per-action character override — when set, that one action is rendered from a *different* model
     # (its own render pass) instead of --character. Lets a preview mix e.g. a body for idle/walk and a
     # variant for attack. Each value is a model path (.fbx/.glb/.gltf) just like --character.
@@ -774,6 +780,21 @@ def main():
     ap.add_argument("--build-only", action="store_true")
     ap.add_argument("--verbose", action="store_true", help="Print full Blender/uv logs (for debugging)")
     args = ap.parse_args()
+
+    # --blend <name>: shortcut for --character game-assets/blend/<name>.blend ('.blend' optional).
+    # --character wins if both are given (blend is just a shortcut). Resolved absolutely via ROOT so
+    # it works regardless of cwd.
+    if args.blend:
+        _stem = args.blend[:-6] if args.blend.lower().endswith(".blend") else args.blend
+        _blend_path = os.path.join(ROOT, "game-assets", "blend", _stem + ".blend")
+        if args.character:
+            print(f"  info: --character given -> ignoring --blend {args.blend!r} "
+                  f"({os.path.relpath(_blend_path, ROOT)})")
+        else:
+            args.character = _blend_path
+            print(f"  info: --blend {args.blend!r} -> --character {os.path.relpath(_blend_path, ROOT)}")
+    if not args.character:
+        ap.error("one of --character/--actor or --blend is required")
 
     # --auto: mirror sheet-win.py's production preset so the preview atlas is directly comparable to
     # the production build. Forces pack + auto-fit + compression; leaves rotation false (production's
