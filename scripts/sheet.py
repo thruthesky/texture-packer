@@ -230,8 +230,58 @@ TEXTURE_LIMIT = 8192
 SUPPORTED_EXT = (".fbx", ".glb", ".gltf")
 CHAR_EXT = SUPPORTED_EXT + (".blend",)
 
-# 액터 카테고리 → game-assets 모델 폴더(대화형 목록·확장자 자동보정용).
-KIND_MODEL_DIR = {"pc": "game-assets/characters", "mob": "game-assets/monsters", "npc": "game-assets/blend"}
+# FLARE16 방향 라벨 SSOT — `_sheet_render.py` 의 DIR16_LABELS · 런타임 `direction8.dart`
+# 의 kDir16Labels 와 **같은 순서**여야 한다(세 곳이 어긋나면 방향이 통째로 뒤집힌다).
+# 8방향 sheet 는 이 배열의 *짝수* 인덱스만 쓴다(E,SE,S,SW,W,NW,N,NE) — 런타임
+# nearest8FromDir16(=(dir16+1)//2 % 8) 의 2k→k 매핑과 한 세트로만 성립한다.
+DIR16_LABELS_SSOT = ["E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW",
+                     "W", "WNW", "NW", "NNW", "N", "NNE", "NE", "ENE"]
+
+# ── 액터 kind 정책 SSOT (2026-07-27) ─────────────────────────────────────────────
+# kind 별 "방향 수·cell·화면 표시 크기·기본 행동·모델 폴더" 를 **한 테이블**로 모은다.
+#
+# 🛑 왜 테이블인가: 과거에는 이 값들이 파일 곳곳의 `("pc","mob","npc")` 튜플과 `kind ==` 분기로
+# 흩어져 있어(argparse choices·대화형 검증·cell/directions 기본·rotation 기본 2곳·validate_atlas·
+# update_pubspec 스캔·actions 기본·run 질문 …), 새 kind 를 추가할 때 **한 곳만 빠뜨려도 조용히
+# 망가졌다** — rotation 튜플 누락 시 `--auto` 가 회전 packing 을 켜고 검증까지 스킵돼 *발 어긋난
+# 자산이 통과*하고, pubspec 스캔 튜플 누락 시 *다른 kind 를 재생성할 때마다 등록이 자동 삭제*된다.
+# 새 kind 는 이 테이블에 한 줄 추가하는 것으로 끝나야 한다.
+#
+#   directions : 강제 방향 수(None = 기본 16, 사용자가 --directions 로 변경 가능)
+#   cell       : 기본 cell px (화질 축 — RAM ≈ W×H×4)
+#   display    : 게임 화면 표시 px (크기 축 — cell 과 **별개**. 64 면 화면에서 절반 크기로 보인다)
+#   actions    : 기본 행동 목록
+#   model_dir  : 대화형 모델 목록·상대경로 보정 폴더 (GAME-ASSETS.md canonical)
+KIND_POLICY = {
+    "pc":     {"directions": None, "cell": DEFAULT_CELL_SIZE, "display": RUNTIME_DISPLAY_SIZE,
+               "actions": DEFAULT_ACTIONS, "model_dir": "game-assets/blend/pc"},
+    "mob":    {"directions": None, "cell": DEFAULT_CELL_SIZE_MOB, "display": RUNTIME_DISPLAY_SIZE,
+               "actions": MOB_ACTIONS, "model_dir": "game-assets/blend/mobs"},
+    "npc":    {"directions": 1, "cell": DEFAULT_CELL_SIZE, "display": RUNTIME_DISPLAY_SIZE,
+               "actions": NPC_ACTIONS, "model_dir": NPC_DIR},
+    # 보스 몬스터 — 8방향(2026-07-27 사용자 지시로 신설한 16방향 원칙의 예외).
+    # 소수 개체가 크게 등장하므로 방향 해상도를 절반으로 줄여 디스크/RAM 을 아낀다. 8방향 sheet 의
+    # region 접미사는 FLARE16 의 *짝수* 라벨(E,SE,S,SW,W,NW,N,NE)이고, 런타임은 16방향 facing 을
+    # nearest8FromDir16 으로 근사한다(actor_animation_set.dart).
+    "boss":   {"directions": 8, "cell": DEFAULT_CELL_SIZE, "display": RUNTIME_DISPLAY_SIZE,
+               "actions": MOB_ACTIONS, "model_dir": "game-assets/blend/mobs"},
+    # 졸개 몬스터 — 8방향 + 64 cell + 화면 64(절반 크기).
+    # 🛑 cell 64 만으로는 화면에서 작아지지 않는다 — 런타임이 cell(orig)을 컴포넌트 size(128)에
+    # 맞춰 확대하므로 "흐릿한 128" 이 될 뿐이다. 그래서 display 64 를 `.atlas` 헤더
+    # `laryen.displaySize` 로 함께 실어, 런타임이 sprite 를 0.5배로 축소 렌더하게 한다.
+    "minion": {"directions": 8, "cell": 64, "display": 64,
+               "actions": MOB_ACTIONS, "model_dir": "game-assets/blend/mobs"},
+}
+ALL_KINDS = tuple(KIND_POLICY)                       # argparse choices·검증 SSOT
+ACTOR_KINDS = ALL_KINDS                              # 전부 actor — rotation 금지·validate 대상
+# 몬스터 계열(= pc/npc 아님). 기본 행동·run 포함 질문·--auto 의 run 제외가 공통 적용된다.
+MONSTER_KINDS = ("mob", "boss", "minion")
+# 방향 수가 고정된 kind(사용자가 다른 값을 주면 거절). npc=1, boss/minion=8.
+FIXED_DIRECTION_KINDS = {k: v["directions"] for k, v in KIND_POLICY.items()
+                         if v["directions"] is not None}
+
+# 액터 카테고리 → game-assets 모델 폴더(대화형 목록·확장자 자동보정용). KIND_POLICY 에서 파생.
+KIND_MODEL_DIR = {k: v["model_dir"] for k, v in KIND_POLICY.items()}
 ANIM_ROOT = "game-assets/animations"
 
 # ── libGDX TexturePacker(gdx-tools, Java) 자동 확보 ─────────────────────────────
@@ -467,10 +517,10 @@ def prompt_missing(args):
     # 1) kind (pc/mob/npc)
     if not args.kind:
         if not interactive:
-            sys.exit("--kind {pc,mob,npc} 가 필요합니다(대화형 불가 — 터미널이 아닙니다).")
-        args.kind = _choose("액터 카테고리를 고르세요 (--kind):", ["pc", "mob", "npc"], allow_manual=False)
-    if args.kind not in ("pc", "mob", "npc"):
-        sys.exit(f"--kind 는 pc, mob 또는 npc 만 가능합니다: {args.kind!r}")
+            sys.exit(f"--kind {{{','.join(ALL_KINDS)}}} 가 필요합니다(대화형 불가 — 터미널이 아닙니다).")
+        args.kind = _choose("액터 카테고리를 고르세요 (--kind):", list(ALL_KINDS), allow_manual=False)
+    if args.kind not in ALL_KINDS:
+        sys.exit(f"--kind 는 {', '.join(ALL_KINDS)} 만 가능합니다: {args.kind!r}")
 
     # 🛑 npc 자동 소스(2026-07-10): --kind npc --name <name> 이면 game-assets/npc/<name>/ 폴더에서
     # 캐릭터(idle 제외 *.fbx/*.blend/*.glb)와 idle.fbx 를 자동 연결한다. --character/--animations 를
@@ -597,7 +647,7 @@ def prompt_missing(args):
     #    우선순위: --run-animation(명시) > --run N/--actions(명시) > 대화형 질문 > 기본 제외.
     #    🛑 --run-animation 을 주면 대화형 질문을 *건너뛴다*(true/false 로 바로 결정).
     args._mob_include_run = (args.run is not None)
-    if args.run_animation is None and args.kind == "mob" and args.actions is None \
+    if args.run_animation is None and args.kind in MONSTER_KINDS and args.actions is None \
             and args.run is None and interactive:
         args._mob_include_run = str2bool(_ask(
             "run(달리기) 애니 포함? 대부분 몬스터는 걷기만 하므로 기본 제외(디스크↓) [y/N]", "N"))
@@ -609,14 +659,14 @@ def prompt_missing(args):
     if args.rotation is None:
         if interactive:
             warn = ("  🛑 캐릭터/몬스터/NPC(pc/mob/npc)는 발 어긋남·패킹 지연으로 n(off) 권장"
-                    if args.kind in ("pc", "mob", "npc") else "")
+                    if args.kind in ACTOR_KINDS else "")
             args.rotation = str2bool(_ask(
                 f"회전 packing(공간 절약) 켤까요?{warn} [Y/n]", "Y"))
         else:
             # 🛑 actor(pc/mob/npc)는 rotate+useOriginalSize 가 발 위치를 어긋나게 하므로(위 경고,
             # 특히 셀 확대 가변 orig 에서 위험 — 2026-07-09) 비대화형 기본 false. decor/tile 은 공간
             # 절약 위해 true. rotate:false 는 page 폭↑(8192 근접 주의) but actor 발 정합이 우선.
-            args.rotation = args.kind not in ("pc", "mob", "npc")
+            args.rotation = args.kind not in ACTOR_KINDS
     # 9) 가로(X)/세로(Y) 여백 trim — 둘 다 기본 true. 미지정이면 대화형으로 물어봄(기본 Y).
     #    하위호환: --strip-whitespace/--keep-whitespace 는 x·y 를 동시 설정(개별 미지정 시).
     _both = getattr(args, "_strip_both", None)
@@ -949,10 +999,16 @@ def clear_clip_log(clip_log_path):
         print(f"  ⚠️ clip.log 초기화 실패(무시하고 진행): {e}")
 
 
-def inject_action_scales(atlas_path, action_scales):
-    """`.atlas` 첫 page 헤더(`repeat:` 줄 뒤)에 액션별 *생성 scale* 을 custom 메타로 주입한다.
+def inject_action_scales(atlas_path, action_scales, directions=None, display_size=None):
+    """`.atlas` 첫 page 헤더(`repeat:` 줄 뒤)에 생성 정보를 custom 메타로 주입한다.
 
-    형식(액션당 한 줄):  `laryen.actionScale.<action>: <scale>`  (예: attack 0.8)
+    형식(한 줄에 하나):
+      · `laryen.actionScale.<action>: <scale>`  (예: attack 0.8) — 행동별 무기 잘림 보정
+      · `laryen.directions: <8|16>`             — 이 sheet 의 방향 수(런타임 table 폭 SSOT)
+      · `laryen.displaySize: <px>`              — 종족 화면 크기(minion 64 → 화면 절반)
+
+    🛑 `directions`/`display_size` 는 **기본값과 다를 때만** 기록한다(16·128). 기존 자산은 메타가
+    없고 런타임이 "없으면 16·128" 로 fallback 하므로, 굳이 모든 atlas 에 적어 넣으면 diff 만 커진다.
 
     🛑 왜 atlas 에 넣나: sheet.py 가 `--scale-<action>` 으로 그 행동 셀을 1/scale 로 키운 값(0.8)을,
     런타임(actor_animation_set.dart)이 읽어 화면 표시 배율 1/scale(=1.25)로 자동 복원한다. 이로써
@@ -969,6 +1025,12 @@ def inject_action_scales(atlas_path, action_scales):
         print(f"  ⚠️ .atlas 열기 실패 — scale 메타 주입 생략: {e}")
         return
     meta = [f"laryen.actionScale.{a}: {float(s):g}" for a, s in action_scales.items()]
+    extra = []
+    if directions is not None and int(directions) != 16:
+        extra.append(f"laryen.directions: {int(directions)}")
+    if display_size is not None and int(display_size) != RUNTIME_DISPLAY_SIZE:
+        extra.append(f"laryen.displaySize: {int(display_size)}")
+    meta += extra
     out, injected = [], False
     for ln in lines:
         out.append(ln)
@@ -982,7 +1044,8 @@ def inject_action_scales(atlas_path, action_scales):
     with open(atlas_path, "w", encoding="utf-8") as f:
         f.write("\n".join(out))
     print("  ✓ .atlas 액션 scale 메타 주입: "
-          + ", ".join(f"{a}={float(s):g}" for a, s in action_scales.items()))
+          + ", ".join(f"{a}={float(s):g}" for a, s in action_scales.items())
+          + (("  |  " + ", ".join(extra)) if extra else ""))
 
 
 def compress_pages(pages, colors=256):
@@ -1039,7 +1102,7 @@ def _png_dimensions(path):
     return struct.unpack(">II", head[16:24])
 
 
-def validate_atlas(atlas_path, kind):
+def validate_atlas(atlas_path, kind, directions=None):
     """생성 직후 packed atlas 정합 검증(2026-07-10, 다른 팀 스프라이트 깨짐 분석 반영).
     문제가 있으면 상세 출력 후 sys.exit — atlas/png 가 서로 다른 세대로 섞이거나(page size 불일치),
     region 이 png 밖을 가리키거나, actor 에 rotate:true 가 남거나, (name,index) 가 중복되면 게임에서
@@ -1048,6 +1111,7 @@ def validate_atlas(atlas_path, kind):
       2. 모든 region 이 page(png) 범위 안  (xy + packed size ≤ page)
       3. actor(pc/mob/npc) rotate:true 금지 (flame useOriginalSize + rotate 는 offset 어긋남)
       4. (region name, index) 중복 금지     (같은 프레임 2벌 → 애니에 다른 프레임 세트가 섞여 재생)
+      5. 방향 라벨 집합 + 각 방향 idle 필수  (8방향은 FLARE16 짝수 라벨만 · idle 누락 = 런타임 크래시)
     """
     folder = os.path.dirname(atlas_path)
     try:
@@ -1126,7 +1190,7 @@ def validate_atlas(atlas_path, kind):
         problems.append(f"region {oob}개가 page(png) 범위 밖 — 좌표가 png 크기를 초과")
 
     # 3. actor rotate 금지
-    if kind in ("pc", "mob", "npc"):
+    if kind in ACTOR_KINDS:
         nrot = sum(1 for r in regions if r.get("rotate"))
         if nrot:
             problems.append(
@@ -1145,6 +1209,40 @@ def validate_atlas(atlas_path, kind):
         problems.append(
             f"(name,index) 중복 {len(dups)}개: {head}{' …' if len(dups) > 6 else ''} "
             f"(같은 프레임 2벌 → 애니에 다른 프레임 세트가 섞여 재생)")
+
+    # 5. 방향 라벨 집합 + 각 방향 idle 필수 (2026-07-27 boss/minion 8방향 도입)
+    #
+    # 🛑 왜: 런타임 getDir16 의 최종 fallback 은 `_table[idle][dir]!` 라, **idle 이 한 방향이라도
+    # 비면 그 방향을 보는 순간 null assertion 으로 크래시**한다(atlas 는 "로드 성공" 상태라
+    # placeholder 보다 위험). 또 8방향 sheet 의 접미사는 FLARE16 의 *짝수* 라벨이어야 런타임의
+    # nearest8FromDir16(2k→k) 매핑과 정합한다 — 홀수 라벨이 섞이면 방향이 통째로 어긋난다.
+    # 생성 단계에서 잡아야 깨진 자산이 번들·커밋되지 않는다.
+    if directions in (8, 16):
+        want = set(DIR16_LABELS_SSOT if directions == 16 else DIR16_LABELS_SSOT[::2])
+        got_idle = set()
+        bad_labels = set()
+        for r in regions:
+            nm = r["name"]
+            if "_" not in nm:
+                continue
+            action, _, label = nm.rpartition("_")
+            if label not in DIR16_LABELS_SSOT:
+                continue                      # 방향 접미사가 아닌 region — 검증 대상 아님
+            if label not in want:
+                bad_labels.add(label)
+            if action == "idle":
+                got_idle.add(label)
+        if bad_labels:
+            problems.append(
+                f"{directions}방향 sheet 에 규약 외 방향 라벨 {len(bad_labels)}개: "
+                f"{', '.join(sorted(bad_labels))} — {directions}방향은 "
+                f"{'FLARE16 전체' if directions == 16 else 'FLARE16 짝수 라벨(E,SE,S,SW,W,NW,N,NE)'} "
+                f"만 허용(런타임 방향 매핑이 어긋남)")
+        missing_idle = want - got_idle
+        if missing_idle:
+            problems.append(
+                f"idle region 이 {len(missing_idle)}개 방향에 없음: {', '.join(sorted(missing_idle))} "
+                f"— 런타임 fallback(_table[idle][dir]!)이 null assertion 으로 **크래시**한다")
 
     if problems:
         print("\n❌ atlas 검증 실패 — 아래 문제로 게임에서 스프라이트가 깨질 수 있어 pubspec 등록을 차단합니다:")
@@ -1202,7 +1300,7 @@ def update_pubspec(rel_paths):
     #    <name>2.png, <name>3.png … 여러 페이지로 분할한다. <name>.png 만 스캔하면 2페이지 이상이
     #    pubspec 에서 빠져(번들 제외 → 게임에서 투명) 회귀한다 → glob 으로 모든 <name>*.png 를 등록.
     scanned = set()
-    for cat in ("pc", "mob", "npc"):
+    for cat in ALL_KINDS:
         base = os.path.join(ROOT, "assets", cat)
         if not os.path.isdir(base):
             continue
@@ -1260,8 +1358,10 @@ def main():
     ap.add_argument("--actor", "--character", dest="character", default=None,
                     help="액터(캐릭터/몬스터) 모델(.fbx / .glb / .gltf / .blend). 확장자로 import 자동 분기. "
                          "생략 시 대화형 선택(--kind 폴더에서).")
-    ap.add_argument("--kind", default=None, choices=["pc", "mob", "npc"],
-                    help="액터 카테고리 — pc(플레이어/사람형), mob(몬스터), npc(마을 NPC). 출력: assets/<kind>/<name>/.")
+    ap.add_argument("--kind", default=None, choices=list(ALL_KINDS),
+                    help="액터 카테고리 — pc(플레이어/사람형·16방향), mob(몬스터·16방향), npc(마을 NPC·1방향 idle), "
+                         "boss(보스 몬스터·8방향), minion(졸개 몬스터·8방향·64 cell·화면 절반 크기). "
+                         "출력: assets/<kind>/<name>/.")
     ap.add_argument("--name", default=None,
                     help="산출 texture 파일명(예: male_vector). → assets/<kind>/<name>/<name>.{png,atlas}. "
                          f"🛑 pc/mob 은 {ANIM_ROOT}/<name>/ 폴더에 애니가 있으면 그 폴더를 캐릭터 "
@@ -1294,7 +1394,8 @@ def main():
     ap.add_argument("--k", type=float, default=128.0,
                     help="K=목표 화면 몸 높이 px. display=K/body_ratio (grid manifest 기록)")
     ap.add_argument("--directions", type=int, default=None, choices=[8, 16],
-                    help="방향 수(=row 수). pc/mob 기본 16, npc 기본 8. 16의 짝수 row 가 8방향과 일치")
+                    help="방향 수(=row 수). pc/mob 기본 16 · npc 1(고정) · boss/minion 8(고정). "
+                         "16의 짝수 row(=FLARE16 짝수 라벨)가 8방향과 일치한다")
     for a in FRAME_OPTION_ACTIONS:
         ap.add_argument(f"--{a}", type=int, help=f"{a} 프레임(셀) 수")
     for a in FRAME_OPTION_ACTIONS:
@@ -1432,11 +1533,11 @@ def main():
         if not cc_explicit:
             args.color_compression = True
             args._color_compression_explicit = True  # color-compression 대화형 질문 억제
-        if args.kind == "mob" and args.run_animation is None:
+        if args.kind in MONSTER_KINDS and args.run_animation is None:
             args.run_animation = False  # mob 은 run 애니 제외(디스크↓) — 대화형 질문(run 포함?)도 억제
         if args.rotation is None:
             # actor(pc/mob/npc)는 rotate 발 어긋남 위험 → false, 그 외 true (line 492 정책 동일)
-            args.rotation = args.kind not in ("pc", "mob", "npc")
+            args.rotation = args.kind not in ACTOR_KINDS
         if args.strip_x_whitespaces is None:
             args.strip_x_whitespaces = True
         if args.strip_y_whitespaces is None:
@@ -1472,35 +1573,45 @@ def main():
     # ── 대화형: 빠진 값 채우기 ──
     args = prompt_missing(args)
 
-    # cell 크기: --cell-size 미지정이면 kind 기본(pc/npc/mob 전부 128 통일, 2026-07-05).
+    # cell 크기·방향 수·기본 행동은 KIND_POLICY 가 SSOT (kind 별 if 분기 대신 테이블 조회).
+    policy = KIND_POLICY[args.kind]
     if args.cell_size is None:
-        cell = DEFAULT_CELL_SIZE_MOB if args.kind == "mob" else DEFAULT_CELL_SIZE
+        cell = policy["cell"]          # pc/mob/npc/boss=128 · minion=64
     else:
         cell = parse_size(args.cell_size)
     if args.directions is None:
-        args.directions = 1 if args.kind == "npc" else 16
+        args.directions = policy["directions"] or 16   # npc=1 · boss/minion=8 · 그 외 16
     if args.actions is None:
-        if args.kind == "npc":
-            args.actions = ",".join(NPC_ACTIONS)
-        elif args.kind == "mob":
-            # mob 기본은 run 제외(디스크 절감). 포함 결정 우선순위:
+        if args.kind in MONSTER_KINDS:
+            # 몬스터 계열(mob/boss/minion) 기본은 run 제외(디스크 절감). 포함 결정 우선순위:
             #   --run-animation(명시) > --run N > 대화형 답(_mob_include_run) > 기본 제외.
             if args.run_animation is not None:
                 include_run = args.run_animation            # 명시값이 최우선(질문 없이 true/false)
             else:
                 include_run = (args.run is not None) or getattr(args, "_mob_include_run", False)
-            args.actions = ",".join(DEFAULT_ACTIONS if include_run else MOB_ACTIONS)
-        else:  # pc
-            args.actions = ",".join(DEFAULT_ACTIONS)
+            args.actions = ",".join(DEFAULT_ACTIONS if include_run else policy["actions"])
+        else:  # pc / npc — 테이블의 기본 행동 그대로
+            args.actions = ",".join(policy["actions"])
     directions = args.directions
     actions = [a.strip() for a in args.actions.split(",") if a.strip()]
-    if args.kind == "npc":
-        if directions != 1:
-            sys.exit("--kind npc 는 1방향(단방향, 정면 S)만 지원합니다. --directions 1 로 생성하세요.")
-        if actions != NPC_ACTIONS:
+    # 방향 수가 고정된 kind 는 다른 값을 거절한다(npc=1 · boss/minion=8).
+    # 🛑 boss/minion 의 8방향은 "신규는 16방향" 원칙의 *명시적 예외*(2026-07-27 사용자 지시)이므로
+    # 아래 legacy 경고를 띄우지 않는다 — 경고를 보고 16으로 되돌리면 그게 회귀다.
+    fixed = FIXED_DIRECTION_KINDS.get(args.kind)
+    if fixed is not None:
+        if directions != fixed:
+            sys.exit(f"--kind {args.kind} 는 {fixed}방향 고정입니다(--directions {fixed} 또는 생략). "
+                     f"받은 값: {directions}")
+        if args.kind == "npc" and actions != NPC_ACTIONS:
             sys.exit("--kind npc 는 idle 단일 애니메이션만 지원합니다.")
     elif directions == 8:
-        print("  ⚠️  --directions 8 은 PC/mob legacy sheet 재생성 호환용입니다(신규 PC/mob 는 16방향).")
+        print("  ⚠️  --directions 8 은 PC/mob legacy sheet 재생성 호환용입니다"
+              "(신규 PC/mob 는 16방향 · 8방향이 필요하면 --kind boss|minion).")
+    # minion 은 cell 64 가 계약이다 — 다른 값을 주면 런타임 표시 배율(laryen.displaySize)과
+    # 어긋나므로 경고한다(강제 종료까지는 하지 않음 — 실험/재생성 여지를 남긴다).
+    if args.kind == "minion" and cell != policy["cell"]:
+        print(f"  ⚠️  --kind minion 의 표준 cell 은 {policy['cell']} 입니다(받은 값 {cell}). "
+              f"화면 표시는 laryen.displaySize={policy['display']} 로 기록되므로 화질만 달라집니다.")
     name = args.name
 
     # ── 입력(모델) 검증 ──
@@ -1893,8 +2004,14 @@ def main():
         # 발 점프(drop off) 방지. X-only trim(strip_y=false)이면 offsetY=0 이라 보정이 무해(no-op).
         if args.strip_y_whitespaces:
             fix_offset_y(atlas)
-        # 액션별 생성 scale 을 .atlas 헤더에 주입 → 런타임이 1/scale 로 display 배율 자동 복원.
-        inject_action_scales(atlas, action_scales)
+        # 액션별 생성 scale + 방향 수 + 종족 표시 크기를 .atlas 헤더에 주입.
+        #   · actionScale : 런타임이 1/scale 로 display 배율 자동 복원(무기 잘림 보정)
+        #   · directions  : 8방향(boss/minion) sheet 를 런타임이 8칸 table 로 빌드하게 하는 계약.
+        #                   이게 없으면 런타임이 16방향으로 읽어 홀수 방향에서 크래시한다.
+        #   · displaySize : minion(64)처럼 화면에서 작게 그릴 종족의 크기 축(cell 과 별개).
+        inject_action_scales(atlas, action_scales,
+                             directions=directions,
+                             display_size=KIND_POLICY[args.kind]["display"])
         if args.color_compression:
             print(f"  [3] 페이지 PNG 압축 중 … (q256 · in-place)")
             for p, before, after in compress_pages(pages, colors=256):
@@ -1905,7 +2022,7 @@ def main():
         # 🛑 생성 직후 정합 검증 — atlas/png 세대 불일치·범위초과·rotate·(name,index) 중복 차단(2026-07-10).
         #    실패 시 sys.exit 로 pubspec 등록 전에 멈춰 깨진 자산이 커밋/번들되지 않게 한다.
         print("  [4] atlas 정합 검증 중 …")
-        validate_atlas(atlas, args.kind)
+        validate_atlas(atlas, args.kind, directions=directions)
         # pubspec 등록 대상: atlas + 모든 페이지 PNG.
         rel_paths = [os.path.relpath(atlas, ROOT)] + [os.path.relpath(p, ROOT) for p in pages]
     else:

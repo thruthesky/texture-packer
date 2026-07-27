@@ -62,11 +62,19 @@ Flutter Flame(`flame_texturepacker`) 게임을 위해 캐릭터·몬스터·NPC 
 
 ### 1. 실행 — kind 별 모델 폴더
 
-| `--kind` | 모델 소스 폴더 | 행동(col) 순서 |
-|---|---|---|
-| `pc` | `game-assets/characters/` | idle · walk · attack · hit · death · run |
-| `mob` | `game-assets/monsters/` | idle · walk · attack · hit · death (run 기본 제외) |
-| `npc` | `game-assets/blend/` | idle · look · talk · walk · wave (8방향) |
+| `--kind` | 모델 소스 폴더 | 방향 · cell · 화면 크기 | 행동(col) 순서 |
+|---|---|---|---|
+| `pc` | `game-assets/blend/pc/` | 16방향 · 128 · 128 | idle · walk · attack · death · run |
+| `mob` | `game-assets/blend/mobs/` | 16방향 · 128 · 128 | idle · walk · attack · death (run 기본 제외) |
+| `npc` | `game-assets/npc/<name>/` | **1방향**(정면 S) · 128 · 128 | idle 단일(24프레임) |
+| `boss` | `game-assets/blend/mobs/` | **8방향** · 128 · 128 | mob 과 동일 |
+| `minion` | `game-assets/blend/mobs/` | **8방향** · **64** · **64**(화면 절반) | mob 과 동일 |
+
+> 🛑 **`hit`(피격) 은 2026-07-20 에 제거**됐다 — 게임에서 hit 포즈가 화면에 사실상 안 나오는데
+> (피격 플래시·파티클·사운드가 대체) atlas 만 키웠다. `--hit N` 옵션은 존재하지 않는다.
+>
+> 🛑 **모델 소스 폴더는 `GAME-ASSETS.md` 가 SSOT**(2026-07-27 canonical). 과거의
+> `game-assets/characters`·`game-assets/monsters` 는 **존재하지 않는 경로**다.
 
 ```bash
 # PC — Mixamo rig FBX + 애니메이션 폴더(game-assets/animations/<variant>)
@@ -284,6 +292,15 @@ restart)해야 새 atlas 가 번들된다. 코드 변경만이면 종료→재�
 
 - **신규 캐릭터/몬스터 sprite 는 16방향·128 cell 만.** "8방향으로 만들어 달라"는 거절하고
   16방향으로 안내한다(짝수 row 가 8방향과 동일하므로 8방향이 필요해도 16 한 장이면 됨).
+  - 🛑 **예외 — `--kind boss` · `--kind minion` 은 8방향이 규격이다**(2026-07-27 사용자 지시로
+    신설). 보스는 소수 개체가 크게 등장하고 졸개는 다수가 작게 등장해, 둘 다 방향 해상도를
+    절반으로 줄여 디스크·RAM 을 아끼는 것이 의도된 설계다. **이 두 kind 를 16방향으로
+    "고쳐" 재생성하지 말 것** — 그것이 회귀다. `minion` 은 추가로 **cell 64 · 화면 표시 64**
+    (다른 몹의 절반 크기)가 규격이다.
+  - 8방향 sheet 의 region 접미사는 FLARE16 의 **짝수** 라벨(`E,SE,S,SW,W,NW,N,NE`)이고,
+    런타임은 `.atlas` 헤더의 `laryen.directions: 8` 을 읽어 8칸 table 을 만든 뒤 16방향 facing 을
+    `nearest8FromDir16` 으로 근사한다. 이 세 가지(생성 라벨·메타·런타임 근사)는 한 세트라
+    하나만 바꾸면 방향이 통째로 어긋난다.
 - **캐릭터·애니 모델은 Mixamo rig**(본 이름 `mixamorig:`). PC 는 부위별 overlay 합성 없이
   세트 단위 통짜 sheet. 몬스터는 장비 분리 없이 전체 모델 렌더.
 - **RAM 은 W×H×4 로 고정** — `--color-compression` 은 디스크/번들 용량만 줄인다(OOM 무관).
