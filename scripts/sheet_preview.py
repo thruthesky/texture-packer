@@ -29,17 +29,19 @@ Self-contained design (shared production helpers untouched):
   so fixing an original also keeps the preview helpers up to date (see _ensure_preview_helpers below).
 
 Usage examples:
-  # macOS (line continuation is backslash \):
-  ./scripts/sheet_preview.py --character game-assets/characters/male.fbx --name male \
-    --animations default
+  # Shortest form — the model path alone. name and animations come from the path.
+  ./scripts/sheet_preview.py game-assets/characters/mob/chassis/chassis.blend
 
   # Windows PowerShell (line continuation is backtick `):
-  py scripts\sheet_preview.py --character game-assets\characters\male.fbx --name male `
-    --animations default
+  py scripts\sheet_preview.py game-assets\characters\mob\chassis\chassis.blend
+
+  # Spelled out (still supported — explicit flags always win over inference)
+  ./scripts/sheet_preview.py --character game-assets/characters/pc/male/male/male.blend \
+    --name male --animations default
 
   # Make the cell even bigger (e.g. 512) — watch the 8192 limit depending on col count
-  ./scripts/sheet_preview.py --character game-assets/monsters/demonic_king.fbx \
-    --name demonic_king --animations game-assets/animations/default --shading texture --size 512
+  ./scripts/sheet_preview.py game-assets/characters/boss/archon/archon.blend \
+    --shading texture --actions idle,walk,attack --size 512
 
 Options are identical to the production sheet except for these defaults:
   --directions  : fixed at 4 (not changeable — preview is 4-direction only).
@@ -47,8 +49,17 @@ Options are identical to the production sheet except for these defaults:
   --idle/--walk/--run/--attack/--death : default to **3** each when omitted (instead of production 8~12).
   --animations  : accepts a variant NAME (e.g. `default` -> game-assets/animations/default) or a path,
                   same as sheet.py/sheet-win.py — you no longer need the game-assets/animations/ prefix.
-  --blend NAME  : shortcut for --character game-assets/characters/<name>.blend (e.g. --blend male). The
-                  '.blend' extension is optional. --character wins if both are given.
+                  Omit it entirely and it resolves like production: the model's own folder ->
+                  game-assets/animations/<name> -> the 'default' variant.
+  --name        : inferred from the model path when omitted.
+  --blend NAME  : shortcut that looks NAME up under the kind tree (e.g. --blend chassis ->
+                  game-assets/characters/mob/chassis/chassis.blend). '.blend' optional.
+                  --character wins if both are given.
+
+Asset tree (renamed 2026-07-28 — game-assets/blend/ is now game-assets/characters/):
+  characters/<kind>/<name>/<name>.<ext>        kind = mob · boss · minion · npc
+  characters/pc/<gender>/<name>/<name>.<ext>   pc carries one extra level
+  Passing such a path fills in --name (and, for --full, the kind's production direction count).
 
 Preview only specific actions (skip rendering the whole set):
   --only-attack                 render just the attack action (combine e.g. --only-attack --only-walk)
@@ -158,6 +169,109 @@ def resolve_animations_dir(spec):
              f"   -> {ANIM_ROOT}/ subfolders: {', '.join(variants) or '(none)'}")
 
 
+# ── model path -> (kind, name) inference — new asset tree (2026-07-28) ──────────────
+# game-assets/blend/ was renamed to game-assets/characters/ and reorganized by kind:
+#   characters/<kind>/<name>/<name>.<ext>        (mob · boss · minion · npc)
+#   characters/pc/<gender>/<name>/<name>.<ext>   (pc carries one extra level)
+# sheet.py/sheet-win.py now infer kind+name from that path, so a bare model path is a complete
+# invocation. The preview mirrors it -> the same one-liner works for a quick eyeball.
+ASSET_ROOT_DIRS = ("characters", "blend")            # new name first; old name still accepted
+KNOWN_KINDS = ("pc", "mob", "npc", "boss", "minion")
+# Production direction counts per kind — used only by --full, whose whole point is to mirror what
+# the real atlas will contain. Kinds absent here use the 16-direction default.
+KIND_FULL_DIRECTIONS = {"boss": 8, "minion": 8, "npc": 1}
+
+
+def infer_kind_name_from_path(path):
+    """Model path -> (kind, name), or (None, None) when the shape is not recognized.
+
+    Delegates to the production packer so the rule has one owner, falling back to a local copy of
+    the same walk when paired with an older sheet.py that predates it. Never guesses: an
+    unrecognized path yields (None, None) and the caller asks or errors instead. A wrong guess
+    would preview a different kind's direction count and cell size than production will bake.
+    """
+    try:
+        fn = getattr(_packer(), "infer_kind_name_from_path", None)
+        if fn:
+            return fn(path)
+    except Exception:
+        pass                                   # older/unloadable packer -> local fallback
+    try:
+        parts = os.path.realpath(os.path.abspath(path)).split(os.sep)
+    except OSError:
+        return None, None
+    for i in range(len(parts) - 2, -1, -1):
+        if parts[i] not in ASSET_ROOT_DIRS:
+            continue
+        rest = parts[i + 1:]                   # [kind, ..., <name>, <file>]
+        if len(rest) < 3 or rest[0] not in KNOWN_KINDS:
+            return None, None
+        if rest[0] == "pc" and len(rest) < 4:   # pc/<gender>/<name>/<file>
+            return None, None
+        return rest[0], rest[-2]               # name is the *folder*, not the filename
+    return None, None
+
+
+def find_model_folder_anims(model_path, actions):
+    """The model's own folder, when it holds a clip for *every* required action (idle.fbx, walk.fbx …).
+
+    All-or-nothing on purpose: topping a partial folder up from another source mixes two rigs and
+    bends arms in some directions (asset ssot.md §retarget). Returns None to fall through.
+    """
+    if not actions:
+        return None
+    folder = os.path.dirname(os.path.abspath(model_path))
+    for a in actions:
+        if not any(os.path.isfile(os.path.join(folder, a + e)) for e in SUPPORTED_EXT):
+            return None
+    return folder
+
+
+def auto_animations_for(model_path, name, actions):
+    """--animations omitted: mirror the production lookup order.
+
+    (1) the model's own folder  (2) game-assets/animations/<name>  (3) the 'default' variant.
+    Step (2) matters — dozens of characters have a dedicated set named after them, and skipping
+    straight to 'default' silently ignores all of them.
+    """
+    local = find_model_folder_anims(model_path, actions)
+    if local:
+        print(f"  info: animations auto (model folder): {os.path.relpath(local, ROOT)}/")
+        return local
+    named = os.path.join(ROOT, ANIM_ROOT, name) if name else ""
+    if named and os.path.isdir(named) and any(
+            f.lower().endswith(SUPPORTED_EXT) for f in os.listdir(named)):
+        print(f"  info: animations auto (name match): {ANIM_ROOT}/{name}/")
+        return os.path.abspath(named)
+    print(f"  info: animations auto -> {ANIM_ROOT}/default/")
+    return resolve_animations_dir("default")
+
+
+def resolve_blend_shortcut(stem):
+    """--blend NAME -> the model path under the kind tree, or None if no single match.
+
+    Kept working across the rename: game-assets/blend/<name>.blend no longer exists, so look for
+    characters/<kind>/**/<name>/<name>.blend instead. Ambiguous hits return None rather than
+    picking one, since silently baking the wrong model is worse than an error.
+    """
+    hits = []
+    for root_dir in ASSET_ROOT_DIRS:
+        base = os.path.join(ROOT, "game-assets", root_dir)
+        if not os.path.isdir(base):
+            continue
+        for ext in CHAR_EXT:
+            hits += glob.glob(os.path.join(base, "*", stem, stem + ext))
+            hits += glob.glob(os.path.join(base, "*", "*", stem, stem + ext))
+            hits += glob.glob(os.path.join(base, stem + ext))   # legacy flat layout
+    hits = sorted(dict.fromkeys(hits))
+    if len(hits) == 1:
+        return hits[0]
+    if len(hits) > 1:
+        print("  warn: --blend {!r} matches {} files -> pass --character explicitly:\n    {}".format(
+            stem, len(hits), "\n    ".join(os.path.relpath(h, ROOT) for h in hits)))
+    return None
+
+
 # Preview defaults — the three axes that differ from the production sheet.
 PREVIEW_DIRECTIONS = 4            # (1) fixed at 4 directions (N/E/S/W cardinals)
 PREVIEW_FRAMES_PER_ACTION = 3     # (2) fixed at 3 frames per action (when omitted)
@@ -197,17 +311,19 @@ EXAMPLES = r"""
   4 dir(N/E/S/W) x 3 frame x 6 action = 18 col x 4 row. Default 384px -> 6912x1536.
   Output -> outputs/<name>_preview/<name>.png (does NOT pollute production assets/)
 
-  # macOS — Mixamo-rig character FBX + Mixamo animation folder (variant name resolves under game-assets/animations/)
-  ./scripts/sheet_preview.py --character game-assets/characters/male.fbx --name male \
-    --animations default
+  # Shortest form — model path only. name + animations are read from the path.
+  ./scripts/sheet_preview.py game-assets/characters/mob/chassis/chassis.blend
 
   # Windows PowerShell — same
-  py scripts\sheet_preview.py --character game-assets\characters\male.fbx --name male `
-    --animations default
+  py scripts\sheet_preview.py game-assets\characters\mob\chassis\chassis.blend
+
+  # Spelled out (explicit flags always win over inference)
+  ./scripts/sheet_preview.py --character game-assets/characters/pc/male/male/male.blend \
+    --name male --animations default
 
   # Bigger cell (512) — with 18 cols that's 9216 > 8192, so reduce actions via --actions or keep 384
-  ./scripts/sheet_preview.py --character game-assets/monsters/demonic_king.fbx \
-    --name demonic_king --animations default --shading texture --actions idle,walk,attack --size 512
+  ./scripts/sheet_preview.py game-assets/characters/boss/archon/archon.blend \
+    --shading texture --actions idle,walk,attack --size 512
 """
 
 
@@ -638,14 +754,18 @@ def main():
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         add_help=True)
+    ap.add_argument("model", nargs="?", default=None,
+                    help="Model path (positional) — e.g. game-assets/characters/mob/chassis/chassis.blend. "
+                         "Given this, --name and --animations are inferred from the path and may be omitted. "
+                         "--character wins if both are given.")
     ap.add_argument("--actor", "--character", dest="character", default=None,
                     help="Actor (character/monster) model (.fbx / .glb / .gltf / .blend, mesh+rig). Import branches by extension. "
                          "This is the *default* model used for every action unless a per-action override "
-                         "(--character-<action>) is given. Required unless --blend is given.")
+                         "(--character-<action>) is given. Required unless the positional model or --blend is given.")
     ap.add_argument("--blend", default=None,
-                    help="Shortcut for --character game-assets/characters/<name>.blend "
-                         "(e.g. --blend male -> --character game-assets/characters/male.blend). The '.blend' "
-                         "extension is optional. Ignored if --character is given explicitly.")
+                    help="Shortcut: look up NAME under the kind tree "
+                         "(e.g. --blend chassis -> game-assets/characters/mob/chassis/chassis.blend). The "
+                         "'.blend' extension is optional. Ignored if --character is given explicitly.")
     # Per-action character override — when set, that one action is rendered from a *different* model
     # (its own render pass) instead of --character. Lets a preview mix e.g. a body for idle/walk and a
     # variant for attack. Each value is a model path (.fbx/.glb/.gltf) just like --character.
@@ -653,14 +773,15 @@ def main():
         ap.add_argument(f"--character-{_act}", dest=f"character_{_act}", default=None,
                         help=f"Override the model used for the '{_act}' action only "
                              f"(default = --character). Same format as --character.")
-    ap.add_argument("--animations", required=True,
-                    help="Mixamo animation source ({action}.fbx/.glb) — *required*. Accepts a variant "
-                         "NAME (e.g. `default` -> game-assets/animations/default) or a path, same as "
-                         "sheet.py/sheet-win.py. Matching bones -> applied directly.")
-    ap.add_argument("--name", "--kind", dest="name", required=True,
+    ap.add_argument("--animations", default=None,
+                    help="Mixamo animation source ({action}.fbx/.glb). Accepts a variant NAME (e.g. "
+                         "`default` -> game-assets/animations/default) or a path, same as "
+                         "sheet.py/sheet-win.py. Matching bones -> applied directly. Omit it to resolve "
+                         "automatically: the model's own folder -> animations/<name> -> 'default'.")
+    ap.add_argument("--name", "--kind", dest="name", default=None,
                     help="Output sprite/file name (preview only — no pc/npc/mob category). "
-                         "Preview output is outputs/<name>_preview/<name>.png. (--kind is a "
-                         "deprecated alias kept for backward compatibility.)")
+                         "Preview output is outputs/<name>_preview/<name>.png. Inferred from the model "
+                         "path when omitted. (--kind is a deprecated alias kept for backward compatibility.)")
     ap.add_argument("--cell-size", "--size", dest="cell_size", default=None,
                     help=f"Cell pixel size (default {PREVIEW_CELL_DEFAULT} preview · 128 with --full). Sum(frames)*cell <= 8192")
     ap.add_argument("--k", type=float, default=128.0,
@@ -781,20 +902,47 @@ def main():
     ap.add_argument("--verbose", action="store_true", help="Print full Blender/uv logs (for debugging)")
     args = ap.parse_args()
 
-    # --blend <name>: shortcut for --character game-assets/characters/<name>.blend ('.blend' optional).
-    # --character wins if both are given (blend is just a shortcut). Resolved absolutely via ROOT so
-    # it works regardless of cwd.
+    # Positional model path — the shortest form, matching sheet.py/sheet-win.py. --character wins
+    # when both are given (an explicit flag always beats a positional convenience).
+    if args.model and not args.character:
+        args.character = args.model
+    elif args.model and args.character and \
+            os.path.abspath(args.model) != os.path.abspath(args.character):
+        print(f"  info: positional model ({args.model}) differs from --character ({args.character}) "
+              f"-> using --character.")
+
+    # --blend <name>: look NAME up under the kind tree ('.blend' optional). The old flat
+    # game-assets/blend/<name>.blend no longer exists (renamed to characters/<kind>/<name>/), so this
+    # resolves by search. --character wins if both are given (blend is just a shortcut).
     if args.blend:
         _stem = args.blend[:-6] if args.blend.lower().endswith(".blend") else args.blend
-        _blend_path = os.path.join(ROOT, "game-assets", "blend", _stem + ".blend")
+        _blend_path = resolve_blend_shortcut(_stem)
         if args.character:
-            print(f"  info: --character given -> ignoring --blend {args.blend!r} "
-                  f"({os.path.relpath(_blend_path, ROOT)})")
-        else:
+            print(f"  info: --character given -> ignoring --blend {args.blend!r}")
+        elif _blend_path:
             args.character = _blend_path
             print(f"  info: --blend {args.blend!r} -> --character {os.path.relpath(_blend_path, ROOT)}")
+        else:
+            ap.error(f"--blend {args.blend!r}: no model found under game-assets/characters/"
+                     f"<kind>/{_stem}/{_stem}.<ext> — pass --character with the full path instead")
     if not args.character:
-        ap.error("one of --character/--actor or --blend is required")
+        ap.error("a model is required — pass it positionally "
+                 "(e.g. game-assets/characters/mob/chassis/chassis.blend), or via --character/--blend")
+
+    # Infer name (and the kind used by --full) from the model path. Only fills what was omitted;
+    # anything given explicitly is left alone. Unrecognized paths do not guess — --name is then
+    # required, exactly as before.
+    inferred_kind, inferred_name = infer_kind_name_from_path(args.character)
+    if inferred_name and not args.name:
+        args.name = inferred_name
+        print(f"  info: name inferred from path: {inferred_name}")
+        _stem = os.path.splitext(os.path.basename(args.character))[0]
+        if _stem != inferred_name:
+            print(f"  warn: folder ({inferred_name}) and filename ({_stem}) differ "
+                  f"-> using the folder name (the folder is the asset unit).")
+    if not args.name:
+        ap.error("--name is required (could not infer it from the model path — expected "
+                 "game-assets/characters/<kind>/<name>/<name>.<ext>)")
 
     # --auto: mirror sheet-win.py's production preset so the preview atlas is directly comparable to
     # the production build. Forces pack + auto-fit + compression; leaves rotation false (production's
@@ -811,7 +959,16 @@ def main():
         cell = parse_size(args.cell_size)
     else:
         cell = 128 if args.full else int(PREVIEW_CELL_DEFAULT)
-    directions = 16 if args.full else PREVIEW_DIRECTIONS
+    # --full exists to mirror what production will actually bake, so it follows the kind's real
+    # direction count when the path told us the kind (boss/minion are 8-direction by spec, npc 1).
+    # The plain preview stays at 4 regardless — it is an eyeball tool, not an asset.
+    if args.full:
+        directions = KIND_FULL_DIRECTIONS.get(inferred_kind, 16)
+        if inferred_kind in KIND_FULL_DIRECTIONS:
+            print(f"  info: --full uses {directions} directions for kind '{inferred_kind}' "
+                  f"(production spec)")
+    else:
+        directions = PREVIEW_DIRECTIONS
 
     # -- resolve which actions to render --------------------------------
     # Precedence: --only-<action> flags / --only  >  --actions  >  all (DEFAULT_ACTIONS).
@@ -899,7 +1056,9 @@ def main():
         weapon_ref_height = float(prof.get("ref_height", 0.0))
 
     # -- animation source -- accept a variant NAME (e.g. `default`) or a path, same as sheet.py.
-    args.animations = resolve_animations_dir(args.animations)
+    # Omitted entirely -> resolve like production: model folder -> animations/<name> -> 'default'.
+    args.animations = (resolve_animations_dir(args.animations) if args.animations
+                       else auto_animations_for(args.character, args.name, actions))
     def anim_file(a):
         return next((os.path.join(args.animations, a + e) for e in SUPPORTED_EXT
                      if os.path.isfile(os.path.join(args.animations, a + e))), None)
@@ -1019,7 +1178,8 @@ def main():
     manifest_png = os.path.join(info_out_dir, name + "_manifest.json")
     print("=" * 64)
     print(f"  platform   : {'Windows' if IS_WINDOWS else ('macOS' if IS_MACOS else sys.platform)}")
-    _dirdesc = "16 directions (full · sheet-win-like)" if args.full else "4 cardinals (E/S/W/N)"
+    _dirdesc = (f"{directions} directions (full · sheet-win-like)" if args.full
+                else "4 cardinals (E/S/W/N)")
     print(f"  PREVIEW mode — {_dirdesc} · {cell}px cell"
           + ("   [--pack: TexturePacker atlas]" if args.pack else "   [grid preview]"))
     if args.pack:
