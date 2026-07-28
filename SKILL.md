@@ -62,13 +62,34 @@ Flutter Flame(`flame_texturepacker`) 게임을 위해 캐릭터·몬스터·NPC 
 
 ### 1. 실행 — kind 별 모델 폴더
 
+### 🚀 가장 쉬운 사용법 — **경로만 준다** (2026-07-28)
+
+```bash
+python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/blend/mob/chassis/chassis.blend
+```
+
+경로에 이미 정보가 다 들어 있으므로 **kind·name·애니메이션·`--auto` 를 자동으로 채운다**.
+`--kind mob --name chassis --animations … --auto` 를 매번 적을 필요가 없다.
+
+- **kind·name 추론** — `blend/<kind>/<name>/<name>.blend` → 그 kind·name.
+  pc 만 성별 단계가 하나 더 있다: `blend/pc/<gender>/<name>/<name>.blend`.
+  name 은 **파일명이 아니라 폴더명**(폴더가 자산의 단위이고 애니도 그 폴더에 함께 놓인다).
+  구조를 못 알아보면 조용히 추측하지 않고 경고 후 기존 흐름(대화형·명시 옵션)으로 간다.
+- **애니메이션 3단 우선순위**
+  1. **모델과 같은 폴더**의 `idle/walk/attack/death.fbx` — 필요한 행동이 *전부* 있을 때만
+     (일부만 있으면 rig 가 섞여 팔 꺾임 회귀가 나므로 다음 순위로 넘어간다)
+  2. `game-assets/animations/<name>/` — 캐릭터 전용 세트(현재 49개 존재)
+  3. `--animations` 값 → 4. `default`
+- **`--auto` 자동** — 경로만 준 단축 호출일 때만 켜진다. **개별 옵션을 주면 그 값이 이긴다.**
+- 기존 방식(`--character` + `--kind` + `--name` 명시)은 **그대로 동작**한다 — 추론이 개입하지 않는다.
+
 | `--kind` | 모델 소스 폴더 | 방향 · cell · 화면 크기 | 행동(col) 순서 |
 |---|---|---|---|
-| `pc` | `game-assets/blend/pc/` | 16방향 · 128 · 128 | idle · walk · attack · death · run |
-| `mob` | `game-assets/blend/mobs/` | 16방향 · 128 · 128 | idle · walk · attack · death (run 기본 제외) |
+| `pc` | `game-assets/blend/pc/<gender>/<name>/` | 16방향 · 128 · 128 | idle · walk · attack · death · run |
+| `mob` | `game-assets/blend/mob/<name>/` | 16방향 · 128 · 128 | idle · walk · attack · death (run 기본 제외) |
 | `npc` | `game-assets/npc/<name>/` | **1방향**(정면 S) · 128 · 128 | idle 단일(24프레임) |
-| `boss` | `game-assets/blend/mobs/` | **8방향** · 128 · 128 | mob 과 동일 |
-| `minion` | `game-assets/blend/mobs/` | **8방향** · **64** · **64**(화면 절반) | mob 과 동일 |
+| `boss` | `game-assets/blend/boss/<name>/` | **8방향** · 128 · 128 | mob 과 동일 |
+| `minion` | `game-assets/blend/minion/<name>/` | **8방향** · **64** · **64**(화면 절반) | mob 과 동일 |
 
 > 🛑 **`hit`(피격) 은 2026-07-20 에 제거**됐다 — 게임에서 hit 포즈가 화면에 사실상 안 나오는데
 > (피격 플래시·파티클·사운드가 대체) atlas 만 키웠다. `--hit N` 옵션은 존재하지 않는다.
@@ -77,25 +98,27 @@ Flutter Flame(`flame_texturepacker`) 게임을 위해 캐릭터·몬스터·NPC 
 > `game-assets/characters`·`game-assets/monsters` 는 **존재하지 않는 경로**다.
 
 ```bash
-# PC — Mixamo rig FBX + 애니메이션 폴더(game-assets/animations/<variant>)
-python3 .claude/skills/texture-packer/scripts/sheet.py \
-  --kind pc --name male_vector \
-  --character game-assets/characters/male_vector.fbx --animations default \
-  --idle 8 --walk 12 --run 12 --attack 16 --hit 8 --death 8
+# ★ 권장 — 경로만 (kind·name·애니·--auto 자동)
+python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/blend/pc/male/male_vector/male_vector.blend
+python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/blend/mob/chassis/chassis.blend
+python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/blend/boss/halucion_boss/halucion_boss.blend
 
-# 몬스터 — 장비 분리 없이 전체 모델 16방향
-python3 .claude/skills/texture-packer/scripts/sheet.py \
-  --kind mob --name demonic_king \
-  --character game-assets/monsters/demonic_king.fbx --animations default
+# 프레임 수 등 일부만 바꾸고 싶을 때 — 준 옵션이 추론·auto 보다 우선한다
+python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/blend/mob/chassis/chassis.blend \
+  --idle 8 --walk 12 --attack 16 --death 8
 
-# NPC — .blend, npc 전용 행동(8방향)
+# NPC — game-assets/npc/<name>/ 에서 자동으로 찾는다
+python3 .claude/skills/texture-packer/scripts/sheet.py --kind npc --name shopkeeper
+
+# 기존 방식(전부 명시)도 그대로 동작한다
 python3 .claude/skills/texture-packer/scripts/sheet.py \
-  --kind npc --name shopkeeper --character game-assets/blend/shopkeeper.blend
+  --kind mob --name chassis \
+  --character game-assets/blend/mob/chassis/chassis.blend --animations default --auto
 ```
 
-- `--character` 는 절대/상대 경로 또는 파일명만(파일명이면 `game-assets/<kind별폴더>/` 에서 찾음).
-- 인자를 생략하면 터미널에서 순서대로 물어본다(대화형). 자율 실행 시 인자를 모두 준다.
-- **신규 PC·몬스터는 반드시 16방향**(기본). `--directions 8` 은 legacy 재생성 전용.
+- 인자를 전부 생략하면 터미널에서 순서대로 물어본다(대화형).
+- **신규 PC·몬스터는 반드시 16방향**(기본). `--directions 8` 은 boss/minion 규격이거나 legacy 재생성 전용.
+- 일괄 재생성은 `scripts/regen_mobs.sh`·`regen_pc.sh`·`regen_npc.sh`.
 
 ### 2. 출력 (기본: 프로젝트 루트의 `assets/`)
 
@@ -114,7 +137,7 @@ assets/<kind>/<name>/<name>.atlas    # flame_texturepacker 가 읽는 trim/rotat
 # → ./viewer/assets/pc/male_vector/male_vector.{png,atlas}
 python3 .claude/skills/texture-packer/scripts/sheet.py \
   --kind pc --name male_vector \
-  --character game-assets/characters/male_vector.fbx --animations default \
+  --character game-assets/blend/pc/male/male_vector/male_vector.blend --animations default \
   --output ./viewer/assets
 ```
 
