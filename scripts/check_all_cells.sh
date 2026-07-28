@@ -6,7 +6,7 @@
 # 사용:
 #   bash check_all_cells.sh [kind] [glob]
 #     kind : pc|mob|npc (기본 mob)
-#     glob : 검사할 자산 glob (기본 game-assets/blend/*.blend). 예: 'game-assets/blend/a*.blend'
+#     glob : 검사할 자산 glob (기본 game-assets/characters/*.blend). 예: 'game-assets/characters/a*.blend'
 #
 # 출력: 자산별 한 줄 — ✅ 정상 / ⚠️ 잘린 행동+권장 scale / ❓ 렌더 실패(애니 없음 등).
 #   잘린 자산은 출력된 --scale-<action> 옵션으로 재생성(--auto-fit-scale 로 자동 조정도 가능).
@@ -17,7 +17,7 @@ ROOT="${LARYEN_ROOT:-$(cd "$SCRIPT_DIR/../../../.." && pwd)}"
 cd "$ROOT"
 
 KIND="${1:-mob}"
-GLOB="${2:-game-assets/blend/*.blend}"
+GLOB="${2:-game-assets/characters/*.blend}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 

@@ -47,7 +47,7 @@ Options are identical to the production sheet except for these defaults:
   --idle/--walk/--run/--attack/--death : default to **3** each when omitted (instead of production 8~12).
   --animations  : accepts a variant NAME (e.g. `default` -> game-assets/animations/default) or a path,
                   same as sheet.py/sheet-win.py — you no longer need the game-assets/animations/ prefix.
-  --blend NAME  : shortcut for --character game-assets/blend/<name>.blend (e.g. --blend male). The
+  --blend NAME  : shortcut for --character game-assets/characters/<name>.blend (e.g. --blend male). The
                   '.blend' extension is optional. --character wins if both are given.
 
 Preview only specific actions (skip rendering the whole set):
@@ -56,7 +56,7 @@ Preview only specific actions (skip rendering the whole set):
   --only idle,attack            a subset
   These override --actions and keep the canonical column order. Fastest way to eyeball one animation.
   Example — attack only:
-    ./scripts/sheet_preview.py --character game-assets/blend/male.blend --name male \
+    ./scripts/sheet_preview.py --character game-assets/characters/male.blend --name male \
       --animations game-assets/animations/default --only-attack
 
 Per-action generation scale (--scale-<action>):
@@ -643,8 +643,8 @@ def main():
                          "This is the *default* model used for every action unless a per-action override "
                          "(--character-<action>) is given. Required unless --blend is given.")
     ap.add_argument("--blend", default=None,
-                    help="Shortcut for --character game-assets/blend/<name>.blend "
-                         "(e.g. --blend male -> --character game-assets/blend/male.blend). The '.blend' "
+                    help="Shortcut for --character game-assets/characters/<name>.blend "
+                         "(e.g. --blend male -> --character game-assets/characters/male.blend). The '.blend' "
                          "extension is optional. Ignored if --character is given explicitly.")
     # Per-action character override — when set, that one action is rendered from a *different* model
     # (its own render pass) instead of --character. Lets a preview mix e.g. a body for idle/walk and a
@@ -781,7 +781,7 @@ def main():
     ap.add_argument("--verbose", action="store_true", help="Print full Blender/uv logs (for debugging)")
     args = ap.parse_args()
 
-    # --blend <name>: shortcut for --character game-assets/blend/<name>.blend ('.blend' optional).
+    # --blend <name>: shortcut for --character game-assets/characters/<name>.blend ('.blend' optional).
     # --character wins if both are given (blend is just a shortcut). Resolved absolutely via ROOT so
     # it works regardless of cwd.
     if args.blend:

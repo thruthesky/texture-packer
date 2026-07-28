@@ -79,7 +79,7 @@ ROOT = _find_project_root(HERE)
 ```python
 KIND_MODEL_DIR = {"pc": "game-assets/characters",
                   "mob": "game-assets/monsters",
-                  "npc": "game-assets/blend"}
+                  "npc": "game-assets/characters"}
 ANIM_ROOT = "game-assets/animations"   # <variant>/{action}.fbx
 
 # 모델 탐색:  os.path.join(ROOT, KIND_MODEL_DIR[kind], <character>)

@@ -208,7 +208,7 @@ DEFAULT_ACTIONS = ["idle", "walk", "attack", "death", "run"]   # pc col 순서(r
 MOB_ACTIONS     = ["idle", "walk", "attack", "death"]
 NPC_ACTIONS = ["idle"]   # 🛑 npc 는 idle 단일 애니메이션만(1방향 고정 서 있기 — 이동/전투 없음, 2026-07-10)
 NPC_IDLE_FRAMES = 24     # npc idle 프레임(셀) 수 — 부드러운 idle 루프(1방향 × 24셀)
-NPC_DIR = "game-assets/npc"   # npc 소스 폴더(폴더별 캐릭터 *.fbx|*.blend + idle.fbx)
+NPC_DIR = "game-assets/characters/npc"   # npc 소스 폴더(폴더별 캐릭터 *.fbx|*.blend + idle.fbx)
 FRAME_OPTION_ACTIONS = ["idle", "walk", "run", "attack", "death", "look", "talk", "wave"]  # hit 제거(2026-07-20)
 # 행동별 *생성 scale* 대화형 질문의 기본 제안값(2026-07-07 사용자 지시). --scale-<action> 을
 # 지정하지 않으면 finalize 가 이 값을 기본 제안으로 개발자에게 물어본다(비대화형이면 이 값 적용).
@@ -243,17 +243,17 @@ DIR16_LABELS_SSOT = ["E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW",
 #   display    : 게임 화면 표시 px(크기 축 — 64 면 화면에서 절반 크기)
 KIND_POLICY = {
     "pc":     {"directions": None, "cell": DEFAULT_CELL_SIZE, "display": RUNTIME_DISPLAY_SIZE,
-               "actions": DEFAULT_ACTIONS, "model_dir": "game-assets/blend/pc"},
+               "actions": DEFAULT_ACTIONS, "model_dir": "game-assets/characters/pc"},
     "mob":    {"directions": None, "cell": DEFAULT_CELL_SIZE_MOB, "display": RUNTIME_DISPLAY_SIZE,
-               "actions": MOB_ACTIONS, "model_dir": "game-assets/blend/mob"},
+               "actions": MOB_ACTIONS, "model_dir": "game-assets/characters/mob"},
     "npc":    {"directions": 1, "cell": DEFAULT_CELL_SIZE, "display": RUNTIME_DISPLAY_SIZE,
                "actions": NPC_ACTIONS, "model_dir": NPC_DIR},
     "boss":   {"directions": 8, "cell": DEFAULT_CELL_SIZE, "display": RUNTIME_DISPLAY_SIZE,
-               "actions": MOB_ACTIONS, "model_dir": "game-assets/blend/boss"},
+               "actions": MOB_ACTIONS, "model_dir": "game-assets/characters/boss"},
     # minion: cell 64 만으로는 화면에서 작아지지 않는다(런타임이 컴포넌트 128 에 맞춰 확대) —
     # display 64 를 `.atlas` 의 laryen.displaySize 로 실어 런타임이 0.5배로 축소 렌더하게 한다.
     "minion": {"directions": 8, "cell": 64, "display": 64,
-               "actions": MOB_ACTIONS, "model_dir": "game-assets/blend/minion"},
+               "actions": MOB_ACTIONS, "model_dir": "game-assets/characters/minion"},
 }
 ALL_KINDS = tuple(KIND_POLICY)
 ACTOR_KINDS = ALL_KINDS
@@ -648,17 +648,22 @@ def anim_dir_for_name(name):
 
 # ── 경로 한 줄 실행 지원 (2026-07-28) ─────────────────────────────────────────
 #
-# `sheet.py ./game-assets/blend/mob/chassis/chassis.blend` 처럼 **모델 경로만** 주면
+# `sheet.py ./game-assets/characters/mob/chassis/chassis.blend` 처럼 **모델 경로만** 주면
 # kind·name·애니메이션·--auto 를 자동으로 채운다. 경로에 이미 그 정보가 다 들어 있는데
 # --kind mob --name chassis --animations ... --auto 를 매번 적는 것은 낭비다.
 #
 # 규칙(GAME-ASSETS.md canonical 구조):
-#     game-assets/blend/pc/<gender>/<name>/<name>.blend   → kind=pc     (성별 단계가 하나 더 있다)
-#     game-assets/blend/mob/<name>/<name>.blend           → kind=mob
-#     game-assets/blend/boss/<name>/<name>.blend          → kind=boss
-#     game-assets/blend/minion/<name>/<name>.blend        → kind=minion
+#     game-assets/characters/pc/<gender>/<name>/<name>.blend   → kind=pc     (성별 단계가 하나 더 있다)
+#     game-assets/characters/mob/<name>/<name>.blend           → kind=mob
+#     game-assets/characters/boss/<name>/<name>.blend          → kind=boss
+#     game-assets/characters/minion/<name>/<name>.blend        → kind=minion
 # name 은 **파일명이 아니라 폴더명** 이다(둘이 다르면 폴더명을 쓰고 경고한다 — 폴더가
 # 자산의 단위이고 애니메이션도 그 폴더에 함께 놓이기 때문).
+
+# 모델 트리의 루트 폴더 이름 — 이 다음 세그먼트가 kind 다.
+# 'blend' 는 2026-07-28 이전 이름(하위호환).
+ASSET_ROOT_DIRS = ("characters", "blend")
+
 
 def infer_kind_name_from_path(path):
     """모델 경로에서 (kind, name) 을 추론한다. 못 하면 (None, None).
@@ -671,9 +676,11 @@ def infer_kind_name_from_path(path):
     except OSError:
         return None, None
     parts = real.split(os.sep)
-    # 뒤에서부터 'blend' 를 찾아 그 다음 세그먼트를 kind 후보로 본다.
+    # 뒤에서부터 자산 루트 폴더(characters)를 찾아 그 다음 세그먼트를 kind 후보로 본다.
+    # 🛑 2026-07-28 폴더 개명: game-assets/blend → game-assets/characters.
+    #    구 이름도 받아 준다(옛 경로를 그대로 넘겨도 동작하게).
     for i in range(len(parts) - 2, -1, -1):
-        if parts[i] != "blend":
+        if parts[i] not in ASSET_ROOT_DIRS:
             continue
         rest = parts[i + 1:]              # [kind, ...,  <name>, <file>]
         if len(rest) < 3:
@@ -810,7 +817,7 @@ def prompt_missing(args):
     #    명확한 에러를 내고 중단한다(2026-07-13 사용자 지시 — 빈 폴더는 실수 가능성이 높음).
     #    npc 는 위 kind==npc 블록이 game-assets/npc/<name>/ 로 이미 처리하므로 여기서는 제외한다.
     # 🥇 **0순위 — 모델과 같은 폴더의 애니메이션**(2026-07-28 사용자 지시).
-    #    game-assets/blend/mob/chassis/ 처럼 모델 옆에 idle/walk/attack/death.fbx 를 두면
+    #    game-assets/characters/mob/chassis/ 처럼 모델 옆에 idle/walk/attack/death.fbx 를 두면
     #    그것을 그대로 쓴다. 자산 한 벌(모델+애니)이 한 폴더에 모이는 구조가 관리에 편하다.
     #    🛑 필요한 행동이 **전부** 있어야 채택한다 — 일부만 있으면 다음 순위로 넘어간다.
     #       모자란 것만 default 에서 섞으면 rig 가 다른 두 소스가 겹쳐 특정 방향에서 팔이
@@ -1607,14 +1614,14 @@ def main():
     # --kind/--name/--animations/--auto 를 자동으로 채운다(infer_kind_name_from_path).
     # nargs="?" 라 기존 호출(--character 명시·인자 없이 대화형)은 그대로 동작한다.
     ap.add_argument("model", nargs="?", default=None,
-                    help="모델 경로(위치 인자) — 예: game-assets/blend/mob/chassis/chassis.blend. "
+                    help="모델 경로(위치 인자) — 예: game-assets/characters/mob/chassis/chassis.blend. "
                          "주면 kind·name·애니·--auto 를 경로에서 자동 추론한다. "
                          "--character 와 동시 지정 시 --character 가 이긴다.")
     ap.add_argument("--actor", "--character", dest="character", default=None,
                     help="Actor (character/monster) model (.fbx / .glb / .gltf / .blend). Import auto-branches by extension. "
                          "If omitted, interactive selection (from the --kind folder).")
     ap.add_argument("--blend", default=None,
-                    help="Shortcut for --character game-assets/blend/<name>.blend "
+                    help="Shortcut for --character game-assets/characters/<name>.blend "
                          "(e.g. --blend male -> --character game-assets\\blend\\male.blend). The '.blend' extension "
                          "is optional. Ignored if --character is also given explicitly.")
     ap.add_argument("--kind", default=None, choices=list(ALL_KINDS),
@@ -1785,7 +1792,7 @@ def main():
     args._texture_pack_explicit = tp_explicit
     args._color_compression_explicit = cc_explicit
 
-    # ── --blend <name>: --character game-assets/blend/<name>.blend 의 단축 표기 ──
+    # ── --blend <name>: --character game-assets/characters/<name>.blend 의 단축 표기 ──
     # '.blend' 확장자는 선택(있어도 되고 없어도 됨). --character 를 함께 명시하면 그 값이 우선하고
     # --blend 는 무시한다(shortcut 이므로 명시 --character 를 덮지 않는다).
     if args.blend:
@@ -1832,7 +1839,7 @@ def main():
                 print("  ✓ --auto 자동 적용(경로 한 줄 실행) — 개별 옵션을 주면 그 값이 우선합니다")
         else:
             print(f"  ⚠️  경로에서 kind/name 을 알 수 없습니다: {args.character}\n"
-                  f"      기대 형태: game-assets/blend/<kind>/<name>/<name>.blend "
+                  f"      기대 형태: game-assets/characters/<kind>/<name>/<name>.blend "
                   f"(pc 는 blend/pc/<gender>/<name>/<name>.blend)\n"
                   f"      → --kind/--name 을 직접 지정하거나 대화형으로 진행합니다.")
 

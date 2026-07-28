@@ -208,7 +208,7 @@ DEFAULT_ACTIONS = ["idle", "walk", "attack", "death", "run"]   # pc col 순서(r
 MOB_ACTIONS     = ["idle", "walk", "attack", "death"]
 NPC_ACTIONS = ["idle"]   # 🛑 npc 는 idle 단일 애니메이션만(1방향 고정 서 있기 — 이동/전투 없음, 2026-07-10)
 NPC_IDLE_FRAMES = 24     # npc idle 프레임(셀) 수 — 부드러운 idle 루프(1방향 × 24셀)
-NPC_DIR = "game-assets/npc"   # npc 소스 폴더(폴더별 캐릭터 *.fbx|*.blend + idle.fbx)
+NPC_DIR = "game-assets/characters/npc"   # npc 소스 폴더(폴더별 캐릭터 *.fbx|*.blend + idle.fbx)
 FRAME_OPTION_ACTIONS = ["idle", "walk", "run", "attack", "death", "look", "talk", "wave"]  # hit 제거(2026-07-20)
 # 행동별 *생성 scale* 대화형 질문의 기본 제안값. --scale-<action> 미지정 시 finalize 가 이 값을
 # 기본 제안으로 물어본다(비대화형이면 이 값 적용). <1 이면 그 행동 셀을 1/scale 로 키워(무기/모션
@@ -254,9 +254,9 @@ DIR16_LABELS_SSOT = ["E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW",
 #   model_dir  : 대화형 모델 목록·상대경로 보정 폴더 (GAME-ASSETS.md canonical)
 KIND_POLICY = {
     "pc":     {"directions": None, "cell": DEFAULT_CELL_SIZE, "display": RUNTIME_DISPLAY_SIZE,
-               "actions": DEFAULT_ACTIONS, "model_dir": "game-assets/blend/pc"},
+               "actions": DEFAULT_ACTIONS, "model_dir": "game-assets/characters/pc"},
     "mob":    {"directions": None, "cell": DEFAULT_CELL_SIZE_MOB, "display": RUNTIME_DISPLAY_SIZE,
-               "actions": MOB_ACTIONS, "model_dir": "game-assets/blend/mob"},
+               "actions": MOB_ACTIONS, "model_dir": "game-assets/characters/mob"},
     "npc":    {"directions": 1, "cell": DEFAULT_CELL_SIZE, "display": RUNTIME_DISPLAY_SIZE,
                "actions": NPC_ACTIONS, "model_dir": NPC_DIR},
     # 보스 몬스터 — 8방향(2026-07-27 사용자 지시로 신설한 16방향 원칙의 예외).
@@ -264,13 +264,13 @@ KIND_POLICY = {
     # region 접미사는 FLARE16 의 *짝수* 라벨(E,SE,S,SW,W,NW,N,NE)이고, 런타임은 16방향 facing 을
     # nearest8FromDir16 으로 근사한다(actor_animation_set.dart).
     "boss":   {"directions": 8, "cell": DEFAULT_CELL_SIZE, "display": RUNTIME_DISPLAY_SIZE,
-               "actions": MOB_ACTIONS, "model_dir": "game-assets/blend/boss"},
+               "actions": MOB_ACTIONS, "model_dir": "game-assets/characters/boss"},
     # 졸개 몬스터 — 8방향 + 64 cell + 화면 64(절반 크기).
     # 🛑 cell 64 만으로는 화면에서 작아지지 않는다 — 런타임이 cell(orig)을 컴포넌트 size(128)에
     # 맞춰 확대하므로 "흐릿한 128" 이 될 뿐이다. 그래서 display 64 를 `.atlas` 헤더
     # `laryen.displaySize` 로 함께 실어, 런타임이 sprite 를 0.5배로 축소 렌더하게 한다.
     "minion": {"directions": 8, "cell": 64, "display": 64,
-               "actions": MOB_ACTIONS, "model_dir": "game-assets/blend/minion"},
+               "actions": MOB_ACTIONS, "model_dir": "game-assets/characters/minion"},
 }
 ALL_KINDS = tuple(KIND_POLICY)                       # argparse choices·검증 SSOT
 ACTOR_KINDS = ALL_KINDS                              # 전부 actor — rotation 금지·validate 대상
@@ -501,17 +501,22 @@ def anim_dir_for_name(name):
 
 # ── 경로 한 줄 실행 지원 (2026-07-28) ─────────────────────────────────────────
 #
-# `sheet.py ./game-assets/blend/mob/chassis/chassis.blend` 처럼 **모델 경로만** 주면
+# `sheet.py ./game-assets/characters/mob/chassis/chassis.blend` 처럼 **모델 경로만** 주면
 # kind·name·애니메이션·--auto 를 자동으로 채운다. 경로에 이미 그 정보가 다 들어 있는데
 # --kind mob --name chassis --animations ... --auto 를 매번 적는 것은 낭비다.
 #
 # 규칙(GAME-ASSETS.md canonical 구조):
-#     game-assets/blend/pc/<gender>/<name>/<name>.blend   → kind=pc     (성별 단계가 하나 더 있다)
-#     game-assets/blend/mob/<name>/<name>.blend           → kind=mob
-#     game-assets/blend/boss/<name>/<name>.blend          → kind=boss
-#     game-assets/blend/minion/<name>/<name>.blend        → kind=minion
+#     game-assets/characters/pc/<gender>/<name>/<name>.blend   → kind=pc     (성별 단계가 하나 더 있다)
+#     game-assets/characters/mob/<name>/<name>.blend           → kind=mob
+#     game-assets/characters/boss/<name>/<name>.blend          → kind=boss
+#     game-assets/characters/minion/<name>/<name>.blend        → kind=minion
 # name 은 **파일명이 아니라 폴더명** 이다(둘이 다르면 폴더명을 쓰고 경고한다 — 폴더가
 # 자산의 단위이고 애니메이션도 그 폴더에 함께 놓이기 때문).
+
+# 모델 트리의 루트 폴더 이름 — 이 다음 세그먼트가 kind 다.
+# 'blend' 는 2026-07-28 이전 이름(하위호환).
+ASSET_ROOT_DIRS = ("characters", "blend")
+
 
 def infer_kind_name_from_path(path):
     """모델 경로에서 (kind, name) 을 추론한다. 못 하면 (None, None).
@@ -523,10 +528,21 @@ def infer_kind_name_from_path(path):
         real = os.path.realpath(os.path.abspath(path))
     except OSError:
         return None, None
+    # 모델 파일 확장자가 아니면 추론하지 않는다(엉뚱한 파일로 kind 를 정하면 자산이 통째로 어긋난다).
+    if os.path.splitext(real)[1].lower() not in CHAR_EXT:
+        return None, None
+    # 이 저장소 밖의 경로는 추론하지 않는다 — 우연히 같은 이름의 폴더 구조를 만나도 오인 금지.
+    try:
+        if os.path.commonpath([real, os.path.realpath(ROOT)]) != os.path.realpath(ROOT):
+            return None, None
+    except ValueError:
+        return None, None            # 다른 드라이브(Windows) 등 비교 불가
     parts = real.split(os.sep)
-    # 뒤에서부터 'blend' 를 찾아 그 다음 세그먼트를 kind 후보로 본다.
+    # 뒤에서부터 자산 루트 폴더(characters)를 찾아 그 다음 세그먼트를 kind 후보로 본다.
+    # 🛑 2026-07-28 폴더 개명: game-assets/blend → game-assets/characters.
+    #    구 이름도 받아 준다(옛 경로를 그대로 넘겨도 동작하게).
     for i in range(len(parts) - 2, -1, -1):
-        if parts[i] != "blend":
+        if parts[i] not in ASSET_ROOT_DIRS:
             continue
         rest = parts[i + 1:]              # [kind, ...,  <name>, <file>]
         if len(rest) < 3:
@@ -545,28 +561,70 @@ def infer_kind_name_from_path(path):
     return None, None
 
 
-def find_model_folder_anims(model_path, actions):
-    """모델과 **같은 폴더** 에 있는 애니메이션 폴더 경로를 반환한다(없으면 None).
+def _anim_files_in(folder, actions):
+    """folder 안에 있는 {action}.fbx/.glb/.gltf 를 {action: 경로} 로 모은다."""
+    out = {}
+    if not folder or not os.path.isdir(folder):
+        return out
+    for a in actions:
+        for e in SUPPORTED_EXT:
+            f = os.path.join(folder, a + e)
+            if os.path.isfile(f):
+                out[a] = f
+                break
+    return out
 
-    필요한 행동(actions)의 파일이 **전부** 있어야 그 폴더를 쓴다. 하나라도 없으면 None 을
-    돌려 다음 후보(animations/<name> → default)로 넘긴다.
-    🛑 모자란 것만 default 에서 섞지 않는다 — rig 가 다른 두 소스를 섞으면 특정 방향에서
-    팔이 꺾이는 retarget 회귀가 난다(asset ssot.md §retarget).
+
+def find_model_folder_anims(model_path, actions, fallback_dirs=(), work_dir=None):
+    """모델과 **같은 폴더** 의 애니를 쓰되, 없는 행동은 fallback 에서 채워 한 폴더로 합성한다.
+
+    반환: 렌더러에 넘길 애니 폴더 경로(없으면 None).
+
+    🛑 부족분 보충이 안전한 이유: 이 프로젝트는 **캐릭터·애니 모두 Mixamo rig**(본 이름
+    'mixamorig:')로 통일돼 있다(본 파일 docstring 규약). 서로 다른 rig 를 섞을 때 생기는
+    retarget 팔 꺾임 문제가 구조적으로 없다. 그래서 "idle 만 직접 만들고 나머지는 공용"
+    같은 부분 교체가 자연스럽게 동작한다.
+
+    렌더러(_sheet_render.py)는 애니 폴더를 **하나만** 받으므로, 섞어야 할 때는 작업 폴더에
+    링크(안 되면 복사)를 모아 단일 폴더처럼 보이게 한다.
     """
     folder = os.path.dirname(os.path.abspath(model_path))
-    have, missing = [], []
-    for a in actions:
-        if any(os.path.isfile(os.path.join(folder, a + e)) for e in SUPPORTED_EXT):
-            have.append(a)
-        else:
-            missing.append(a)
-    if not have:
-        return None                        # 애니가 아예 없음 — 조용히 다음 후보로
+    local = _anim_files_in(folder, actions)
+    if not local:
+        return None                          # 폴더 애니 없음 — 조용히 다음 후보로
+
+    missing = [a for a in actions if a not in local]
+    if not missing:
+        return folder                        # 전부 있으면 그 폴더를 그대로
+
+    # 부족분을 fallback 에서 찾는다(우선순위 순).
+    picked = dict(local)
+    for fb in fallback_dirs:
+        if not missing:
+            break
+        got = _anim_files_in(fb, missing)
+        for a, f in got.items():
+            picked[a] = f
+        missing = [a for a in missing if a not in picked]
+
+    src_desc = f"모델 폴더 {len(local)}개"
+    if len(picked) > len(local):
+        src_desc += f" + 공용 {len(picked) - len(local)}개"
     if missing:
-        print(f"  ℹ️  모델 폴더 애니 {len(have)}/{len(actions)}개만 있어 건너뜁니다"
-              f"(없음: {', '.join(missing)}) → animations/ 에서 찾습니다")
-        return None
-    return folder
+        print(f"  ⚠️  애니를 못 찾은 행동: {', '.join(missing)} — 그 행동은 정적으로 렌더된다")
+
+    # 합성 폴더 — 작업 폴더 아래에 만들어 원본을 건드리지 않는다.
+    merged = os.path.join(work_dir or os.path.join(ROOT, "outputs"), "_anim_merged")
+    shutil.rmtree(merged, ignore_errors=True)
+    os.makedirs(merged, exist_ok=True)
+    for a, src in picked.items():
+        dst = os.path.join(merged, a + os.path.splitext(src)[1])
+        try:
+            os.link(src, dst)                # 하드링크(빠르고 용량 0)
+        except OSError:
+            shutil.copy2(src, dst)           # 실패 시 복사(다른 파일시스템·Windows)
+    print(f"  ℹ️  애니 합성({src_desc}) → {os.path.relpath(merged, ROOT)}/")
+    return merged
 
 
 def list_models(kind):
@@ -663,7 +721,7 @@ def prompt_missing(args):
     #    명확한 에러를 내고 중단한다(2026-07-13 사용자 지시 — 빈 폴더는 실수 가능성이 높음).
     #    npc 는 위 kind==npc 블록이 game-assets/npc/<name>/ 로 이미 처리하므로 여기서는 제외한다.
     # 🥇 **0순위 — 모델과 같은 폴더의 애니메이션**(2026-07-28 사용자 지시).
-    #    game-assets/blend/mob/chassis/ 처럼 모델 옆에 idle/walk/attack/death.fbx 를 두면
+    #    game-assets/characters/mob/chassis/ 처럼 모델 옆에 idle/walk/attack/death.fbx 를 두면
     #    그것을 그대로 쓴다. 자산 한 벌(모델+애니)이 한 폴더에 모이는 구조가 관리에 편하다.
     #    🛑 필요한 행동이 **전부** 있어야 채택한다 — 일부만 있으면 다음 순위로 넘어간다.
     #       모자란 것만 default 에서 섞으면 rig 가 다른 두 소스가 겹쳐 특정 방향에서 팔이
@@ -674,7 +732,11 @@ def prompt_missing(args):
     if args.character and not args.animations:
         _acts = [a.strip() for a in (args.actions or "").split(",") if a.strip()] \
             or KIND_POLICY.get(args.kind, {}).get("actions", DEFAULT_ACTIONS)
-        _local = find_model_folder_anims(args.character, _acts)
+        # fallback 우선순위: animations/<name>/ → animations/default/
+        _fbs = [os.path.join(ROOT, ANIM_ROOT, args.name or ""),
+                os.path.join(ROOT, ANIM_ROOT, "default")]
+        _local = find_model_folder_anims(args.character, _acts, _fbs,
+                                         work_dir=os.path.join(ROOT, "outputs"))
         if _local:
             args.animations = _local
             print(f"  ℹ️  애니 자동(모델 폴더): {os.path.relpath(_local, ROOT)}/")
@@ -1463,7 +1525,7 @@ def main():
     # --kind/--name/--animations/--auto 를 자동으로 채운다(infer_kind_name_from_path).
     # nargs="?" 라 기존 호출(--character 명시·인자 없이 대화형)은 그대로 동작한다.
     ap.add_argument("model", nargs="?", default=None,
-                    help="모델 경로(위치 인자) — 예: game-assets/blend/mob/chassis/chassis.blend. "
+                    help="모델 경로(위치 인자) — 예: game-assets/characters/mob/chassis/chassis.blend. "
                          "주면 kind·name·애니·--auto 를 경로에서 자동 추론한다. "
                          "--character 와 동시 지정 시 --character 가 이긴다.")
     ap.add_argument("--actor", "--character", dest="character", default=None,
@@ -1645,9 +1707,13 @@ def main():
     elif args.model and args.character and os.path.abspath(args.model) != os.path.abspath(args.character):
         print(f"  ℹ️  위치 인자({args.model})와 --character({args.character}) 가 다릅니다 "
               f"— --character 를 사용합니다.")
-    if args.model:
+    # 🛑 위치 인자든 --character 든 **모델 경로만 있으면** 추론한다.
+    #    사용자 요구가 "--character <경로> 로 줄 때 --kind/--name 을 생략" 이므로 위치 인자
+    #    전용으로 두면 요구가 반쯤만 충족된다(cowork codex 지적).
+    if args.character and (not args.kind or not args.name):
         ik, iname = infer_kind_name_from_path(args.character)
         if ik:
+            inferred_both = (not args.kind) and (not args.name)
             if not args.kind:
                 args.kind = ik
                 print(f"  ✓ 경로에서 kind 추론: {ik}")
@@ -1658,13 +1724,15 @@ def main():
                 if stem != iname:
                     print(f"  ⚠️  폴더명({iname})과 파일명({stem})이 다릅니다 — "
                           f"폴더명을 name 으로 씁니다(자산 단위는 폴더).")
-            # 경로만 준 단축 호출이면 --auto 를 켠다(명시 옵션은 뒤 블록에서 그대로 우선).
-            if not args.auto:
+            # kind·name 을 *둘 다* 추론으로 채웠다 = 사용자가 최소 인자만 준 간편 호출 →
+            # 나머지 기본값(--auto 프리셋)도 채워 준다. 개별 옵션은 뒤 블록에서 그대로 우선.
+            # (--kind/--name 을 명시한 기존 호출은 여기 해당 없음 → 동작 무변화.)
+            if inferred_both and not args.auto:
                 args.auto = True
-                print("  ✓ --auto 자동 적용(경로 한 줄 실행) — 개별 옵션을 주면 그 값이 우선합니다")
+                print("  ✓ --auto 자동 적용(경로 기반 간편 호출) — 개별 옵션을 주면 그 값이 우선합니다")
         else:
             print(f"  ⚠️  경로에서 kind/name 을 알 수 없습니다: {args.character}\n"
-                  f"      기대 형태: game-assets/blend/<kind>/<name>/<name>.blend "
+                  f"      기대 형태: game-assets/characters/<kind>/<name>/<name>.blend "
                   f"(pc 는 blend/pc/<gender>/<name>/<name>.blend)\n"
                   f"      → --kind/--name 을 직접 지정하거나 대화형으로 진행합니다.")
 

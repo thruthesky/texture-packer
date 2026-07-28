@@ -23,7 +23,7 @@ Flutter Flame(`flame_texturepacker`) 게임을 위해 캐릭터·몬스터·NPC 
 | `scripts/_sheet_build.py` | `--texture-pack false` 시 균일 grid 단일 sheet 빌드 |
 | `scripts/align_feet.py` | 프레임의 발(불투명 bbox 하단)을 셀 0.85 에 정렬(행동 전환 상하 점프 방지) |
 | `scripts/verify_cells.py` | **cell 잘림(clip) 자동 검사** — 낱장 프레임 4 테두리 불투명 픽셀로 셀 밖 잘림 판정 + 행동별 권장 `--scale-<action>`(flutter 실행 불필요) |
-| `scripts/check_all_cells.sh` | **배치 cell 잘림 검사** — 여러 자산(`game-assets/blend/*.blend` 등)을 한 번에 렌더·검사해 자산별 잘림 프로파일 표로 요약(빠른 전체 스캔·최소 프레임, 정밀은 실제 프레임 수로 개별 실행) |
+| `scripts/check_all_cells.sh` | **배치 cell 잘림 검사** — 여러 자산(`game-assets/characters/*.blend` 등)을 한 번에 렌더·검사해 자산별 잘림 프로파일 표로 요약(빠른 전체 스캔·최소 프레임, 정밀은 실제 프레임 수로 개별 실행) |
 | `scripts/sheet-win.py` | Windows 형제(빌드). sheet.py 와 동일 보조 스크립트 공유 |
 | `scripts/sheet_preview.py` | **4방향 preview**(macOS+Windows 공용). sheet.py 설정 재사용 + Windows Blender/Python 탐지 |
 | `scripts/combine_to_runtime_sheet.py` | 행동별 256 sheet → 런타임 128 단일 16×60 sheet 합성(legacy) |
@@ -65,14 +65,17 @@ Flutter Flame(`flame_texturepacker`) 게임을 위해 캐릭터·몬스터·NPC 
 ### 🚀 가장 쉬운 사용법 — **경로만 준다** (2026-07-28)
 
 ```bash
-python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/blend/mob/chassis/chassis.blend
+python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/characters/mob/chassis/chassis.blend
 ```
 
 경로에 이미 정보가 다 들어 있으므로 **kind·name·애니메이션·`--auto` 를 자동으로 채운다**.
 `--kind mob --name chassis --animations … --auto` 를 매번 적을 필요가 없다.
 
-- **kind·name 추론** — `blend/<kind>/<name>/<name>.blend` → 그 kind·name.
-  pc 만 성별 단계가 하나 더 있다: `blend/pc/<gender>/<name>/<name>.blend`.
+- **모델 형식** — `.blend` · `.fbx` · `.glb` · `.gltf` 모두 된다(확장자로 import 자동 분기).
+  예: NPC 5종은 `.fbx` 모델이다.
+- **kind·name 추론** — `characters/<kind>/<name>/<name>.<ext>` → 그 kind·name.
+  pc 만 성별 단계가 하나 더 있다: `characters/pc/<gender>/<name>/<name>.<ext>`.
+  구 폴더명 `blend/` 도 하위호환으로 받는다(2026-07-28 `characters/` 로 개명).
   name 은 **파일명이 아니라 폴더명**(폴더가 자산의 단위이고 애니도 그 폴더에 함께 놓인다).
   구조를 못 알아보면 조용히 추측하지 않고 경고 후 기존 흐름(대화형·명시 옵션)으로 간다.
 - **애니메이션 3단 우선순위**
@@ -85,11 +88,11 @@ python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/blend/mob/c
 
 | `--kind` | 모델 소스 폴더 | 방향 · cell · 화면 크기 | 행동(col) 순서 |
 |---|---|---|---|
-| `pc` | `game-assets/blend/pc/<gender>/<name>/` | 16방향 · 128 · 128 | idle · walk · attack · death · run |
-| `mob` | `game-assets/blend/mob/<name>/` | 16방향 · 128 · 128 | idle · walk · attack · death (run 기본 제외) |
-| `npc` | `game-assets/npc/<name>/` | **1방향**(정면 S) · 128 · 128 | idle 단일(24프레임) |
-| `boss` | `game-assets/blend/boss/<name>/` | **8방향** · 128 · 128 | mob 과 동일 |
-| `minion` | `game-assets/blend/minion/<name>/` | **8방향** · **64** · **64**(화면 절반) | mob 과 동일 |
+| `pc` | `game-assets/characters/pc/<gender>/<name>/` | 16방향 · 128 · 128 | idle · walk · attack · death · run |
+| `mob` | `game-assets/characters/mob/<name>/` | 16방향 · 128 · 128 | idle · walk · attack · death (run 기본 제외) |
+| `npc` | `game-assets/characters/npc/<name>/` | **1방향**(정면 S) · 128 · 128 | idle 단일(24프레임) |
+| `boss` | `game-assets/characters/boss/<name>/` | **8방향** · 128 · 128 | mob 과 동일 |
+| `minion` | `game-assets/characters/minion/<name>/` | **8방향** · **64** · **64**(화면 절반) | mob 과 동일 |
 
 > 🛑 **`hit`(피격) 은 2026-07-20 에 제거**됐다 — 게임에서 hit 포즈가 화면에 사실상 안 나오는데
 > (피격 플래시·파티클·사운드가 대체) atlas 만 키웠다. `--hit N` 옵션은 존재하지 않는다.
@@ -99,12 +102,12 @@ python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/blend/mob/c
 
 ```bash
 # ★ 권장 — 경로만 (kind·name·애니·--auto 자동)
-python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/blend/pc/male/male_vector/male_vector.blend
-python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/blend/mob/chassis/chassis.blend
-python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/blend/boss/halucion_boss/halucion_boss.blend
+python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/characters/pc/male/male_vector/male_vector.blend
+python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/characters/mob/chassis/chassis.blend
+python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/characters/boss/halucion_boss/halucion_boss.blend
 
 # 프레임 수 등 일부만 바꾸고 싶을 때 — 준 옵션이 추론·auto 보다 우선한다
-python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/blend/mob/chassis/chassis.blend \
+python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/characters/mob/chassis/chassis.blend \
   --idle 8 --walk 12 --attack 16 --death 8
 
 # NPC — game-assets/npc/<name>/ 에서 자동으로 찾는다
@@ -113,7 +116,7 @@ python3 .claude/skills/texture-packer/scripts/sheet.py --kind npc --name shopkee
 # 기존 방식(전부 명시)도 그대로 동작한다
 python3 .claude/skills/texture-packer/scripts/sheet.py \
   --kind mob --name chassis \
-  --character game-assets/blend/mob/chassis/chassis.blend --animations default --auto
+  --character game-assets/characters/mob/chassis/chassis.blend --animations default --auto
 ```
 
 - 인자를 전부 생략하면 터미널에서 순서대로 물어본다(대화형).
@@ -137,7 +140,7 @@ assets/<kind>/<name>/<name>.atlas    # flame_texturepacker 가 읽는 trim/rotat
 # → ./viewer/assets/pc/male_vector/male_vector.{png,atlas}
 python3 .claude/skills/texture-packer/scripts/sheet.py \
   --kind pc --name male_vector \
-  --character game-assets/blend/pc/male/male_vector/male_vector.blend --animations default \
+  --character game-assets/characters/pc/male/male_vector/male_vector.blend --animations default \
   --output ./viewer/assets
 ```
 
@@ -161,7 +164,7 @@ flutter 실행 없이 **생성 이미지 검사만으로** 잡아 자동 조정�
 
 1. **전체 스캔** — 어떤 자산이 잘리나 한 번에(진행 표시·예상 시간):
    ```bash
-   bash scripts/check_all_cells.sh mob 'game-assets/blend/*.blend'
+   bash scripts/check_all_cells.sh mob 'game-assets/characters/*.blend'
    # → 자산별 [i/N] ✅ 정상 / ⚠️ 잘린 행동 + 권장 --scale-<action>
    ```
 2. **자동 조정 재생성** — 잘린 자산을 `--auto-fit-scale` 로:
