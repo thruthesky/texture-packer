@@ -762,7 +762,7 @@ def prompt_missing(args):
     if args.kind not in ALL_KINDS:
         sys.exit(f"--kind must be pc, mob or npc: {args.kind!r}")
 
-    # 🛑 npc 자동 소스(2026-07-10): --kind npc --name <name> 이면 game-assets/npc/<name>/ 폴더에서
+    # 🛑 npc 자동 소스(2026-07-10): --kind npc --name <name> 이면 game-assets/characters/npc/<name>/ 폴더에서
     # 캐릭터(idle 제외 *.fbx/*.blend/*.glb)와 idle.fbx 를 자동 연결한다. --character/--animations 를
     # 명시하면 그 값이 우선. npc 는 --name 이 폴더명이므로 (비대화형에선) 필수다.
     if args.kind == "npc" and args.name and (not args.character or not args.animations):
@@ -815,7 +815,7 @@ def prompt_missing(args):
     #    이름 폴더가 없으면 --animations 값을 따르고, 그마저 없으면 'default' variant.
     #    🛑 이름 폴더가 *존재하지만 비어 있으면*(애니 파일 0개) 조용히 목록/기본값으로 폴백하지 않고
     #    명확한 에러를 내고 중단한다(2026-07-13 사용자 지시 — 빈 폴더는 실수 가능성이 높음).
-    #    npc 는 위 kind==npc 블록이 game-assets/npc/<name>/ 로 이미 처리하므로 여기서는 제외한다.
+    #    npc 는 위 kind==npc 블록이 game-assets/characters/npc/<name>/ 로 이미 처리하므로 여기서는 제외한다.
     # 🥇 **0순위 — 모델과 같은 폴더의 애니메이션**(2026-07-28 사용자 지시).
     #    game-assets/characters/mob/chassis/ 처럼 모델 옆에 idle/walk/attack/death.fbx 를 두면
     #    그것을 그대로 쓴다. 자산 한 벌(모델+애니)이 한 폴더에 모이는 구조가 관리에 편하다.

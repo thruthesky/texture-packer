@@ -110,7 +110,7 @@ python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/characters/
 python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/characters/mob/chassis/chassis.blend \
   --idle 8 --walk 12 --attack 16 --death 8
 
-# NPC — game-assets/npc/<name>/ 에서 자동으로 찾는다
+# NPC — game-assets/characters/npc/<name>/ 에서 자동으로 찾는다
 python3 .claude/skills/texture-packer/scripts/sheet.py --kind npc --name shopkeeper
 
 # 기존 방식(전부 명시)도 그대로 동작한다
