@@ -25,7 +25,7 @@ Flutter Flame(`flame_texturepacker`) 게임을 위해 캐릭터·몬스터·NPC 
 | `scripts/verify_cells.py` | **cell 잘림(clip) 자동 검사** — 낱장 프레임 4 테두리 불투명 픽셀로 셀 밖 잘림 판정 + 행동별 권장 `--scale-<action>`(flutter 실행 불필요) |
 | `scripts/check_all_cells.sh` | **배치 cell 잘림 검사** — 여러 자산(`game-assets/characters/*.blend` 등)을 한 번에 렌더·검사해 자산별 잘림 프로파일 표로 요약(빠른 전체 스캔·최소 프레임, 정밀은 실제 프레임 수로 개별 실행) |
 | `scripts/sheet-win.py` | Windows 형제(빌드). sheet.py 와 동일 보조 스크립트 공유 |
-| `scripts/sheet_preview.py` | **4방향 preview**(macOS+Windows 공용). sheet.py 설정 재사용 + Windows Blender/Python 탐지 |
+| `scripts/sheet-preview.py` | **4방향 preview**(macOS+Windows 공용). sheet.py 설정 재사용 + Windows Blender/Python 탐지 |
 | `scripts/combine_to_runtime_sheet.py` | 행동별 256 sheet → 런타임 128 단일 16×60 sheet 합성(legacy) |
 | `scripts/gen_all_sheets.sh` | 보유 PC/몬스터 모델 일괄 생성 헬퍼 |
 | `scripts/tools/*.jar` | libGDX TexturePacker(gdx 1.13.1) — 없으면 sheet.py 가 Maven 에서 자동 다운로드 캐시 |
@@ -51,7 +51,7 @@ Flutter Flame(`flame_texturepacker`) 게임을 위해 캐릭터·몬스터·NPC 
 |---|---|---|
 | **모든 셀 128px 고정** | `--cell-size 128` (pc/mob/npc 전부) | (변경 비권장) `--cell-size N` 으로 다른 값 지정 가능 |
 | **color compression** — 256색 FASTOCTREE 양자화(번들 용량 절감) | `--color-compression true` | `--color-compression false` (무손실 RGBA) |
-| **color brightness** — exposure+gamma 밝기·대비 부스트 | `--vivid 5` (1~9) | `--vivid 1` (무보정) |
+| **color brightness** — exposure+gamma 밝기·대비 부스트 | `--vivid 9` (1~9) | `--vivid 1` (무보정) |
 | **shading EEVEE** — PBR 3점 조명 렌더 | `--shading eevee` | `--shading texture` (WORKBENCH TEXTURE) |
 
 > **왜 128 고정인가:** 게임 표시 크기(display 128)와 1:1 이라 축소 렌더가 없어 화질 손실이
@@ -191,7 +191,7 @@ flutter 실행 없이 **생성 이미지 검사만으로** 잡아 자동 조정�
 | `--texture-pack {true\|false}` | true | true=packed atlas, false=grid 단일 sheet(`_sheet_build.py`) |
 | `--cell-size N` | 128 | atlas orig/cell 픽셀(pc/mob/npc 전부 128 고정) |
 | `--color-compression {true\|false}` | true | 256색 FASTOCTREE 양자화(디스크만 절감, RAM 무관) |
-| `--vivid 1-9` | 5 | 밝기(exposure)+대비(gamma) 부스트. 1=무보정, 9=최대 |
+| `--vivid 1-9` | 9 | 밝기(exposure)+대비(gamma) 부스트. 1=무보정, 9=최대(기본) |
 | `--shading {eevee\|texture}` | eevee | eevee=PBR 3점 조명, texture=WORKBENCH TEXTURE(금속/갑옷용) |
 | `--render-res N` | max(256,cell) | frame 렌더 해상도(→ 128 로 자동 축소, `--scale-frames`) |
 | `--idle/--walk/--attack/--hit/--death/--run N` | 8/12/16/8/8/12 | 행동별 프레임 수 |
@@ -210,7 +210,7 @@ flutter 실행 없이 **생성 이미지 검사만으로** 잡아 자동 조정�
 | `--verbose` | off | Blender/packer **전체 로그** 출력. 미지정(기본) 시 **간략 진행**만: 단계 `[1]렌더 [2]packing`, `N/총장(%)·장/s·ETA·현재 행동`, 단계별·총 소요시간(`✓ 렌더 완료 — 1024장 · 3m18s · 5.2장/s`) |
 | `--verify-cells [true\|false]` | **true** | 렌더 후 낱장 프레임의 **cell 잘림(clip) 자동 검사**(flutter 불필요). run/attack 등 큰 모션이 셀 밖으로 잘리면 행동별 권장 `--scale-<action>` 출력. `--build-only`(재packing) 시에도 기존 프레임을 검사해 리포트(auto-fit 은 렌더 경로만) |
 | `--auto-fit-scale` | off | 잘린 행동 발견 시 **scale 을 낮춰 자동 재렌더**(최대 6회·0.6 하한 → 잘림 0 수렴). pc/npc/mob 큰 모션·칼끝을 사람 개입 없이 셀 안에 맞춤. 🛑 **이 옵션을 켜면 `--scale-<action>`·전역 `--scale` 은 모두 무시** 되고 1.0(원본)에서 시작해 필요한 만큼만 하강(대화형 scale 질문도 건너뜀) |
-| `--auto` | off | 🚀 **원클릭 최적 프리셋** — `--texture-pack true --auto-fit-scale --color-compression true --vivid 5 --rotation true --strip-x-whitespaces true --strip-y-whitespaces true --shading eevee` 를 한 번에 켠다(`shading` 의 `true`=`eevee`). **`--kind mob` 이면 `--run-animation false` 도 자동**(run 애니 제외·디스크↓). **대화형 질문(texture-pack·color-compression·rotation·strip·scale·run-animation) 전부 없이** pc/mob/npc 를 잘림 없이 자동 조정 + 최대 압축으로 패킹. 🛑 개별 옵션을 함께 명시하면 **그 값이 우선**(auto 는 미지정 항목만 채움) — 예 `--auto --run-animation true` 는 mob 이라도 run 포함, `--auto --rotation false` 는 회전만 끄고 나머지 프리셋 유지. auto-fit 이 켜지므로 `--scale-<action>`·전역 `--scale` 무시(1.0 자동 하강) |
+| `--auto` | off | 🚀 **원클릭 최적 프리셋** — `--texture-pack true --auto-fit-scale --color-compression true --vivid 9 --rotation true --strip-x-whitespaces true --strip-y-whitespaces true --shading eevee` 를 한 번에 켠다(`shading` 의 `true`=`eevee`). **`--kind mob` 이면 `--run-animation false` 도 자동**(run 애니 제외·디스크↓). **대화형 질문(texture-pack·color-compression·rotation·strip·scale·run-animation) 전부 없이** pc/mob/npc 를 잘림 없이 자동 조정 + 최대 압축으로 패킹. 🛑 개별 옵션을 함께 명시하면 **그 값이 우선**(auto 는 미지정 항목만 채움) — 예 `--auto --run-animation true` 는 mob 이라도 run 포함, `--auto --rotation false` 는 회전만 끄고 나머지 프리셋 유지. auto-fit 이 켜지므로 `--scale-<action>`·전역 `--scale` 무시(1.0 자동 하강) |
 
 ## 런타임: Flutter/Flame 이 `.atlas`/`.png` 를 파싱해 게임 월드에 표시
 

@@ -1599,9 +1599,9 @@ def main():
     ap.add_argument("--chrome-matcap", default="fullmetal.exr",
                     help="--shading chrome 이 쓸 Blender 내장 matcap "
                          "(fullmetal=크롬 · metal_carpaint=붉은 금속 · metal_bronze=청동)")
-    ap.add_argument("--vivid", type=int, default=5, choices=range(1, 10), metavar="1-9",
-                    help="색상 진하기(대비)+밝기 강도(1~9, 기본 5). 5=적당히 밝고 진하게, "
-                         "9=최대, 1=부스트 없음. 렌더 후 compositor 로 자동 적용.")
+    ap.add_argument("--vivid", type=int, default=9, choices=range(1, 10), metavar="1-9",
+                    help="색상 진하기(대비)+밝기 강도(1~9, 기본 9). 9=최대로 밝고 진하게, "
+                         "5=중간, 1=부스트 없음. 렌더 후 compositor 로 자동 적용.")
     ap.add_argument("--render-res", type=int, default=0,
                     help=f"Blender 개별 frame 렌더 해상도(기본 max({DEFAULT_RENDER_RES}, --cell-size)). "
                          f"기본값 조합은 {DEFAULT_RENDER_RES}px render → {DEFAULT_CELL_SIZE}px atlas.")
@@ -1631,7 +1631,7 @@ def main():
     # ── 원클릭 최적 프리셋 ──
     ap.add_argument("--auto", action="store_true",
                     help="🚀 원클릭 최적 프리셋 — `--texture-pack true --auto-fit-scale "
-                         "--color-compression true --vivid 5 --rotation true --strip-x-whitespaces true "
+                         "--color-compression true --vivid 9 --rotation true --strip-x-whitespaces true "
                          "--strip-y-whitespaces true --shading eevee` 를 한 번에 켠다(shading 의 "
                          "'true'=eevee · --kind mob 이면 --run-animation false 도 자동 적용해 run 애니 "
                          "제외·디스크↓). 대화형 질문 없이 "
@@ -1754,14 +1754,14 @@ def main():
         if args.strip_y_whitespaces is None:
             args.strip_y_whitespaces = True
         if not any(a == "--vivid" or a.startswith("--vivid=") for a in argv):
-            args.vivid = 5
+            args.vivid = 9
         if not any(a == "--shading" or a.startswith("--shading=") for a in argv):
             args.shading = "eevee"
 
     # ── npc 기본 프리셋: --kind npc 는 --auto 없이도 최적 기본값을 자동 적용한다(2026-07-10). ──
     # idle 단일(무기 없음·잘림 없음)이라 셀 확대(auto-fit)는 불필요 — scale 1.0 고정(--scale-idle/walk
     # 질문 안 함, 위 scale_actions 에서 처리). texture-pack + 256색 압축 + x·y 여백 trim + rotation
-    # false(actor 발 정합) + shading(eevee)/vivid(5) 기본을 *미지정 시* 자동 적용한다(개별 옵션 명시 시
+    # false(actor 발 정합) + shading(eevee)/vivid(9) 기본을 *미지정 시* 자동 적용한다(개별 옵션 명시 시
     # 그 값이 우선). --auto 와 달리 auto-fit-scale 은 켜지 않는다(npc 는 잘림이 없어 불필요).
     if args.kind == "npc":
         if not tp_explicit:
@@ -1777,7 +1777,7 @@ def main():
         if args.rotation is None:
             args.rotation = False
         if not any(a == "--vivid" or a.startswith("--vivid=") for a in argv):
-            args.vivid = 5
+            args.vivid = 9
         if not any(a == "--shading" or a.startswith("--shading=") for a in argv):
             args.shading = "eevee"
 
@@ -2012,7 +2012,7 @@ def main():
                      "texture": "  (WORKBENCH TEXTURE)",
                      "chrome": f"  (WORKBENCH MATCAP {args.chrome_matcap} × TEXTURE — 크롬)"}
     print(f"  셰이딩     : {args.shading}" + _shading_desc.get(args.shading, ""))
-    print(f"  색상 강도  : vivid={args.vivid}/9  (대비+밝기 부스트, 5=중간)")
+    print(f"  색상 강도  : vivid={args.vivid}/9  (대비+밝기 부스트, 9=최대·기본)")
     print(f"  컬러 압축  : " + ("256색 양자화(~80%↓, 육안 동일)" if args.color_compression else "무손실 RGBA"))
     print(f"  cell 크기  : {cell}px   렌더 {render_res}px" + ("  ⚡draft" if args.draft else ""))
     print(f"  행동/셀 수 : " + "   ".join(f"{a}={frames.get(a, 8)}" for a in actions))

@@ -192,7 +192,7 @@ NPC_ACTIONS     = ["idle","look","talk","walk","wave"]           # npc col 순�
 `sheet-win.py` 는 macOS `sheet.py` 의 Windows 판으로, 같은 보조
 스크립트(`_sheet_render.py`·`_sheet_build.py`·`align_feet.py`)를 `os.path.join(HERE, …)` 로
 공유한다 → 함께 이 스킬 scripts/ 에 있어야 정상. `_find_project_root` 로직·compress_image
-경로(`ROOT/scripts`)를 sheet.py 와 동일하게 유지한다. `sheet_preview.py` 는 **macOS+Windows 공용**
+경로(`ROOT/scripts`)를 sheet.py 와 동일하게 유지한다. `sheet-preview.py` 는 **macOS+Windows 공용**
 4방향 preview 로, Blender/Python 탐지만 `sys.platform` 으로 분기하고(macOS=`/Applications/Blender.app`·
 Windows=레지스트리+표준 설치경로, build-step Python=`python3` vs `python`/`py`) 나머지 preview
 로직은 두 OS 에서 동일하다. 4방향 preview 허용 패치를 production `_sheet_render.py`/`_sheet_build.py`

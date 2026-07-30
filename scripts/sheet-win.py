@@ -1689,9 +1689,9 @@ def main():
     ap.add_argument("--chrome-matcap", default="fullmetal.exr",
                     help="Blender built-in matcap used by --shading chrome "
                          "(fullmetal=chrome · metal_carpaint=red metal · metal_bronze=bronze)")
-    ap.add_argument("--vivid", type=int, default=5, choices=range(1, 10), metavar="1-9",
-                    help="Color saturation (contrast)+brightness strength (1~9, default 5). 5=moderately bright and vivid, "
-                         "9=max, 1=no boost. Auto-applied via compositor after rendering.")
+    ap.add_argument("--vivid", type=int, default=9, choices=range(1, 10), metavar="1-9",
+                    help="Color saturation (contrast)+brightness strength (1~9, default 9). 9=max brightness and vividness, "
+                         "5=medium, 1=no boost. Auto-applied via compositor after rendering.")
     ap.add_argument("--render-res", type=int, default=0,
                     help=f"Blender individual frame render resolution (default max({DEFAULT_RENDER_RES}, --cell-size)). "
                          f"The default combination is {DEFAULT_RENDER_RES}px render → {DEFAULT_CELL_SIZE}px atlas.")
@@ -1728,7 +1728,7 @@ def main():
     # ── 원클릭 최적 프리셋 ──
     ap.add_argument("--auto", action="store_true",
                     help="🚀 One-click optimal preset — turns on `--texture-pack true --auto-fit-scale "
-                         "--color-compression true --vivid 5 --rotation true --strip-x-whitespaces true "
+                         "--color-compression true --vivid 9 --rotation true --strip-x-whitespaces true "
                          "--strip-y-whitespaces true --shading eevee` all at once (for shading "
                          "'true'=eevee · when --kind mob, also auto-applies --run-animation false to exclude the run "
                          "animation · disk↓). Without interactive prompts, "
@@ -1861,14 +1861,14 @@ def main():
         if args.strip_y_whitespaces is None:
             args.strip_y_whitespaces = True
         if not any(a == "--vivid" or a.startswith("--vivid=") for a in argv):
-            args.vivid = 5
+            args.vivid = 9
         if not any(a == "--shading" or a.startswith("--shading=") for a in argv):
             args.shading = "eevee"
 
     # ── npc 기본 프리셋: --kind npc 는 --auto 없이도 최적 기본값을 자동 적용한다(2026-07-10). ──
     # idle 단일(무기 없음·잘림 없음)이라 셀 확대(auto-fit)는 불필요 — scale 1.0 고정(--scale-idle/walk
     # 질문 안 함, 위 scale_actions 에서 처리). texture-pack + 256색 압축 + x·y 여백 trim + rotation
-    # false(actor 발 정합) + shading(eevee)/vivid(5) 기본을 *미지정 시* 자동 적용한다(개별 옵션 명시 시
+    # false(actor 발 정합) + shading(eevee)/vivid(9) 기본을 *미지정 시* 자동 적용한다(개별 옵션 명시 시
     # 그 값이 우선). --auto 와 달리 auto-fit-scale 은 켜지 않는다(npc 는 잘림이 없어 불필요).
     if args.kind == "npc":
         if not tp_explicit:
@@ -1884,7 +1884,7 @@ def main():
         if args.rotation is None:
             args.rotation = False
         if not any(a == "--vivid" or a.startswith("--vivid=") for a in argv):
-            args.vivid = 5
+            args.vivid = 9
         if not any(a == "--shading" or a.startswith("--shading=") for a in argv):
             args.shading = "eevee"
 
@@ -2123,7 +2123,7 @@ def main():
                      "texture": "  (WORKBENCH TEXTURE)",
                      "chrome": f"  (WORKBENCH MATCAP {args.chrome_matcap} x TEXTURE - chrome)"}
     print(f"  shading     : {args.shading}" + _shading_desc.get(args.shading, ""))
-    print(f"  color power : vivid={args.vivid}/9  (contrast+brightness boost, 5=medium)")
+    print(f"  color power : vivid={args.vivid}/9  (contrast+brightness boost, 9=max/default)")
     print(f"  color comp  : " + ("256-color quantize (~80% smaller, visually identical)" if args.color_compression else "lossless RGBA"))
     print(f"  cell size   : {cell}px   render {render_res}px" + ("  ⚡draft" if args.draft else ""))
     print(f"  action/cells: " + "   ".join(f"{a}={frames.get(a, 8)}" for a in actions))
