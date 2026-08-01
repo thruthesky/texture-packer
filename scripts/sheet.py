@@ -1455,8 +1455,14 @@ def _remote_excluded_paths():
         if ex:
             print(f"  ℹ️ R2 lazy download 제외 {len(ex)}개 — pubspec 등록에서 뺍니다")
         return ex
-    except Exception as e:  # 모듈 없음·PyYAML 없음 등
-        # 🛑 조용히 넘기지 않는다 — 제외가 적용되지 않으면 뺐던 자산이 번들로 복귀한다.
+    except RuntimeError:
+        # 🛑 **통과시킨다(fail-closed).** `bundle_exclusion` 은 PyYAML 이 없어 제외 목록을 *읽을 수
+        #    없을 때* 이 예외를 던진다 — 그 상황에서 빈 집합을 돌려주면 **R2 로 뺀 자산이 말없이
+        #    번들로 복귀**한다(몬스터 하나만 재생성해도 스토어 용량이 원상복구된다).
+        #    모듈 자체가 없는 저장소(이 스킬을 다른 프로젝트에서 쓰는 경우)는 ImportError 라
+        #    아래 분기로 가므로, 이 raise 가 타 프로젝트 사용을 막지는 않는다.
+        raise
+    except Exception as e:  # 모듈 없음(다른 프로젝트) 등 — 경고 후 기존 동작 그대로
         print(f"  ⚠️ R2 제외 목록을 읽지 못했습니다({e}) — 번들에 다시 포함될 수 있습니다")
         return set()
 
