@@ -192,6 +192,15 @@ DEFAULT_CELL_SIZE = 128
 # 그 행동 셀을 1/scale 로 키워 담는다 — body 원본 화질 유지, 무기 잘림 SSOT, asset ssot.md §1.5).
 DEFAULT_CELL_SIZE_MOB = 128
 RUNTIME_DISPLAY_SIZE = 128
+# 보스 전용 — cell·display 를 **둘 다** 256 으로(2026-07-31 사용자 지시, cowork `boss-size`).
+# 보스는 소수 개체가 "크게 등장하는" 연출이 핵심이라 PC(128)의 2배로 보이게 한다.
+# 🛑 전역 DEFAULT_CELL_SIZE / RUNTIME_DISPLAY_SIZE 는 **절대 건드리지 않는다** — 그 둘을 256 으로
+#    바꾸면 PC·일반몹·NPC 가 전부 커지고, 런타임 배율의 분모(kActorDisplaySize)까지 바뀌어
+#    `laryen.displaySize` 메타가 무력화된다. 크기 조정은 반드시 kind 별 정책(KIND_POLICY)으로만.
+# 🛑 RAM ≈ page W × H × 4 라 cell 2배 = 픽셀 4배다(game-memory.md). 보스는 존당 1종만 활성이라
+#    피크 부담은 제한적이지만, 값을 더 키우려면 iOS 실기 메모리 실측이 선행돼야 한다.
+BOSS_CELL_SIZE = 256
+BOSS_DISPLAY_SIZE = 256
 
 # 단일 통합 grid sheet 는 Σframes×cell (W) × directions×cell (H).
 DEFAULT_FRAMES  = {"idle": 8, "walk": 12, "attack": 16, "death": 8, "run": 12,
@@ -259,11 +268,21 @@ KIND_POLICY = {
                "actions": MOB_ACTIONS, "model_dir": "game-assets/characters/mob"},
     "npc":    {"directions": 1, "cell": DEFAULT_CELL_SIZE, "display": RUNTIME_DISPLAY_SIZE,
                "actions": NPC_ACTIONS, "model_dir": NPC_DIR},
-    # 보스 몬스터 — 8방향(2026-07-27 사용자 지시로 신설한 16방향 원칙의 예외).
+    # 보스 몬스터 — 8방향(2026-07-27 사용자 지시로 신설한 16방향 원칙의 예외) + 256 cell·화면 256.
     # 소수 개체가 크게 등장하므로 방향 해상도를 절반으로 줄여 디스크/RAM 을 아낀다. 8방향 sheet 의
     # region 접미사는 FLARE16 의 *짝수* 라벨(E,SE,S,SW,W,NW,N,NE)이고, 런타임은 16방향 facing 을
     # nearest8FromDir16 으로 근사한다(actor_animation_set.dart).
-    "boss":   {"directions": 8, "cell": DEFAULT_CELL_SIZE, "display": RUNTIME_DISPLAY_SIZE,
+    # 🛑 cell·display 를 **둘 다** 256 으로 둔다(2026-07-31 사용자 지시 — 보스를 PC 보다 크게).
+    #    minion(cell 64 + display 64)의 정확한 대칭이다:
+    #      · cell 256   = 화질 축. atlas orig 가 256 이라 2배 확대 시에도 픽셀이 뭉개지지 않는다.
+    #      · display 256 = 크기 축. `.atlas` 헤더 `laryen.displaySize: 256` 으로 실려 런타임이
+    #        발 피벗 기준 2.0배(=256/128)로 확대 렌더한다(ScaledActorVisual).
+    #    한쪽만 바꾸면 실패한다 — cell 만 256 이면 "선명하지만 PC 와 같은 크기"(displaySize 가
+    #    기본 128 과 같아 헤더에 아예 안 실림, inject_action_scales), display 만 256 이면
+    #    "크지만 128 텍스처를 늘린 흐릿한 그림"이 된다.
+    #    🛑 컴포넌트 size 를 키우는 방식은 금지다(라벨 어긋남·y-sort 진동 회귀 이력) —
+    #       클라는 size 128 을 고정하고 sprite 픽셀만 확대한다(scaled_actor_visual.dart).
+    "boss":   {"directions": 8, "cell": BOSS_CELL_SIZE, "display": BOSS_DISPLAY_SIZE,
                "actions": MOB_ACTIONS, "model_dir": "game-assets/characters/boss"},
     # 졸개 몬스터 — 8방향 + 64 cell + 화면 64(절반 크기).
     # 🛑 cell 64 만으로는 화면에서 작아지지 않는다 — 런타임이 cell(orig)을 컴포넌트 size(128)에
@@ -1422,6 +1441,32 @@ def validate_atlas(atlas_path, kind, directions=None):
           f"(page {len(page_order)} · region {len(regions)})")
 
 
+def _remote_excluded_paths():
+    """R2 lazy download 로 뺀 자산 경로 집합(없으면 빈 집합).
+
+    판정 SSOT 는 저장소의 `tools/assets/bundle_exclusion.py` 다 — 이 스킬 스크립트가 그 모듈을
+    import 해 **같은 답** 을 쓴다(두 곳에 규칙을 복제하면 반드시 갈라진다). 모듈이 없는
+    저장소(이 스킬을 다른 프로젝트에서 쓰는 경우)에서는 빈 집합 → 기존 동작 그대로.
+    """
+    try:
+        sys.path.insert(0, os.path.join(ROOT, "tools", "assets"))
+        import bundle_exclusion  # type: ignore
+        ex = bundle_exclusion.excluded_paths()
+        if ex:
+            print(f"  ℹ️ R2 lazy download 제외 {len(ex)}개 — pubspec 등록에서 뺍니다")
+        return ex
+    except RuntimeError:
+        # 🛑 **통과시킨다(fail-closed).** `bundle_exclusion` 은 PyYAML 이 없어 제외 목록을 *읽을 수
+        #    없을 때* 이 예외를 던진다 — 그 상황에서 빈 집합을 돌려주면 **R2 로 뺀 자산이 말없이
+        #    번들로 복귀**한다(몬스터 하나만 재생성해도 스토어 용량이 원상복구된다).
+        #    모듈 자체가 없는 저장소(이 스킬을 다른 프로젝트에서 쓰는 경우)는 ImportError 라
+        #    아래 분기로 가므로, 이 raise 가 타 프로젝트 사용을 막지는 않는다.
+        raise
+    except Exception as e:  # 모듈 없음(다른 프로젝트) 등 — 경고 후 기존 동작 그대로
+        print(f"  ⚠️ R2 제외 목록을 읽지 못했습니다({e}) — 번들에 다시 포함될 수 있습니다")
+        return set()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  pubspec.yaml 자동 갱신 — 이번 <name> 파일만 관리 블록에 추가.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1479,6 +1524,11 @@ def update_pubspec(rel_paths):
             for png in glob.glob(os.path.join(d, nm + "*.png")):
                 scanned.add(f"assets/{cat}/{nm}/{os.path.basename(png)}")
     want = scanned | set(rel_paths)
+    # 🛑 **R2 lazy download 로 뺀 자산은 등록하지 않는다.** 위 스캔은 "디스크 진실" 이라 R2 로
+    #    보낸 자산도 (업로드 원본이므로 디스크에 남아 있어) 다시 등록해 버린다. 그러면 스토어
+    #    번들이 조용히 원상복구되고 lazy download 가 무효화된다. 제외 판정 SSOT =
+    #    tools/assets/bundle_exclusion.py(→ tools/assets/remote_assets.yaml).
+    want -= _remote_excluded_paths()
     added = sorted(want - existing)
     removed = sorted(existing - want)   # 블록에 있었으나 디스크에 없는 항목(빌드 실패 유발) → 제거
     union = sorted(want)                # 🛑 디스크 진실만 — 파일 없는 등록은 자동 제거(bundle 실패 방지)

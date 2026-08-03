@@ -91,7 +91,7 @@ python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/characters/
 | `pc` | `game-assets/characters/pc/<gender>/<name>/` | 16방향 · 128 · 128 | idle · walk · attack · death · run |
 | `mob` | `game-assets/characters/mob/<name>/` | 16방향 · 128 · 128 | idle · walk · attack · death (run 기본 제외) |
 | `npc` | `game-assets/characters/npc/<name>/` | **1방향**(정면 S) · 128 · 128 | idle 단일(24프레임) |
-| `boss` | `game-assets/characters/boss/<name>/` | **8방향** · 128 · 128 | mob 과 동일 |
+| `boss` | `game-assets/characters/boss/<name>/` | **8방향** · **256** · **256**(화면 2배) | mob 과 동일 |
 | `minion` | `game-assets/characters/minion/<name>/` | **8방향** · **64** · **64**(화면 절반) | mob 과 동일 |
 
 > 🛑 **`hit`(피격) 은 2026-07-20 에 제거**됐다 — 게임에서 hit 포즈가 화면에 사실상 안 나오는데

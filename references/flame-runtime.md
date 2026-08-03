@@ -31,7 +31,8 @@ assets/<cat>/<name>/<name>.png    (packed page 이미지, cat=pc|mob)
   ▼
 ActorAnimationSet  ← PlayerComponent / MobComponent(= SpriteAnimationComponent) 가 보유
   │  ④ animation = animSet.getDir16(state, facing16)   (매 상태/방향 변화마다 교체)
-  │  ⑤ size = kActorDisplaySize × displayScaleFor(state), anchor = (0.5, 0.85)
+  │  ⑤ size = kActorDisplaySize **고정(128)**, anchor = (0.5, 0.85)
+  │     sprite 픽셀만 발 피벗 기준 displayScaleFor(state) 배로 확대 렌더(ScaledActorVisual)
   │  ⑥ position = worldToScreen(서버 world cm)          (isometric 투영)
   ▼
 게임 월드(IsoHuntWorld)에 Y-sort priority 로 depth 정렬되어 렌더
@@ -228,16 +229,27 @@ MobComponent({required Vector2 position, required this.animSet, ...})
 Future<void> onLoad() async {
   await super.onLoad();
   animation = animSet.getDir16(_state, _facing);
-  _applyDisplaySize(_state);                    // 행동별 배율 정합
   ActorAnimationSet.desyncPhase(this, spawnId); // 동시 전환 위상 분산(합체 착시 방지)
+  // … 이름표·HP바·표적 링을 add …
+  _applyDisplaySize(_state);   // ★ 자식을 add 한 *뒤* 에 — 아래 🛑 참조
 }
 
-/// 행동 배율을 매 상태 변화에 적용 — 화면 몸 크기를 행동 무관 동일하게(무기 잘림 SSOT).
+/// 표시 배율을 매 상태 변화에 적용 — 화면 몸 크기를 행동 무관 동일하게(무기 잘림 SSOT).
+/// 🛑 컴포넌트 `size` 는 **128 고정**이다. sprite 픽셀만 발 피벗 (64, 108.8) 기준으로 확대한다.
 void _applyDisplaySize(ActorState s) {
-  final want = kActorDisplaySize * animSet.displayScaleFor(s);
-  if ((size.x - want).abs() > 0.01) size = Vector2.all(want);
+  setActorScale(s, animSet);   // ScaledActorVisual — render() 의 canvas.scale 로 반영
+  _applyOverheadDrop();        // 몸 크기가 바뀐 만큼 이름표·HP바·표적 링을 함께 이동
 }
 ```
+
+🛑 **`size = Vector2.all(want)` 로 컴포넌트를 키우는 옛 경로는 폐기됐다**(회귀 이력). size 를 키우면
+① 자식(이름표·HP바·표적 링)이 128 절대좌표라 sprite 중심에서 어긋나고 ② y-sort 가 size 진동으로
+9.6px 점프하며 ③ `pc.size` 를 참조하는 이펙트가 함께 떨린다. 반드시
+[`ScaledActorVisual`](../../../../lib/features/game/render/mixins/scaled_actor_visual.dart) 을 쓴다.
+
+🛑 **`_applyDisplaySize` 는 자식 위젯을 `add` 한 뒤에 호출해야 한다** — 자식 생성 전에 부르면
+오버헤드 보정이 아무에게도 적용되지 않은 채 `_overheadDrop` 만 캐시돼, "같은 값이면 조기 return"
+가드에 걸려 영구 미보정이 된다(2026-07-31 cowork `boss-size` 에서 실제 발현 확인).
 
 - `kActorDisplaySize = 128.0 * kActorDisplayScale` — pc/mob/npc 모두 화면 128 로 그린다
   (texture=display 1:1, self/remote/mob 정합). [actor_animation_set.dart:33](../../../../lib/features/game/render/actor_animation_set.dart#L33).

@@ -192,6 +192,11 @@ DEFAULT_CELL_SIZE = 128
 # mob(몬스터) 기본 cell — pc/npc/mob 전부 128 통일이라 동일값.
 DEFAULT_CELL_SIZE_MOB = 128
 RUNTIME_DISPLAY_SIZE = 128
+# 보스 전용 — cell·display 둘 다 256(2026-07-31, cowork `boss-size`). PC 의 2배 크기로 등장한다.
+# 🛑 mac 의 sheet.py 와 같은 값을 유지할 것(패리티). 전역 DEFAULT_CELL_SIZE/RUNTIME_DISPLAY_SIZE
+#    를 바꾸면 PC·일반몹까지 커지고 런타임 배율 분모가 어긋나므로 kind 정책으로만 조정한다.
+BOSS_CELL_SIZE = 256
+BOSS_DISPLAY_SIZE = 256
 
 # 단일 통합 grid sheet 는 Σframes×cell (W) × directions×cell (H).
 DEFAULT_FRAMES  = {"idle": 8, "walk": 12, "attack": 16, "death": 8, "run": 12,
@@ -248,7 +253,12 @@ KIND_POLICY = {
                "actions": MOB_ACTIONS, "model_dir": "game-assets/characters/mob"},
     "npc":    {"directions": 1, "cell": DEFAULT_CELL_SIZE, "display": RUNTIME_DISPLAY_SIZE,
                "actions": NPC_ACTIONS, "model_dir": NPC_DIR},
-    "boss":   {"directions": 8, "cell": DEFAULT_CELL_SIZE, "display": RUNTIME_DISPLAY_SIZE,
+    # boss: cell·display 를 **둘 다** 256 으로(2026-07-31, cowork `boss-size`) — minion 의 대칭.
+    # cell 256 = 화질 축(2배 확대해도 안 뭉개짐) · display 256 = 크기 축(laryen.displaySize 메타로
+    # 런타임이 발 피벗 2.0배 확대). 한쪽만 바꾸면 "같은 크기" 또는 "흐릿한 확대"가 된다.
+    # 🛑 mac 쪽 sheet.py 와 반드시 같은 값을 유지할 것 — 한쪽만 고치면 그 OS 에서 재생성할 때
+    #    128 로 조용히 되돌아가는 회귀가 난다.
+    "boss":   {"directions": 8, "cell": BOSS_CELL_SIZE, "display": BOSS_DISPLAY_SIZE,
                "actions": MOB_ACTIONS, "model_dir": "game-assets/characters/boss"},
     # minion: cell 64 만으로는 화면에서 작아지지 않는다(런타임이 컴포넌트 128 에 맞춰 확대) —
     # display 64 를 `.atlas` 의 laryen.displaySize 로 실어 런타임이 0.5배로 축소 렌더하게 한다.
