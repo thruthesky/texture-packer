@@ -194,13 +194,13 @@ flutter 실행 없이 **생성 이미지 검사만으로** 잡아 자동 조정�
 | `--vivid 1-9` | 9 | 밝기(exposure)+대비(gamma) 부스트. 1=무보정, 9=최대(기본) |
 | `--shading {eevee\|texture}` | eevee | eevee=PBR 3점 조명, texture=WORKBENCH TEXTURE(금속/갑옷용) |
 | `--render-res N` | max(256,cell) | frame 렌더 해상도(→ 128 로 자동 축소, `--scale-frames`) |
-| `--idle/--walk/--attack/--hit/--death/--run N` | 8/12/16/8/8/12 | 행동별 프레임 수 |
+| `--idle/--walk/--attack/--death/--run N` | 8/12/16/8/12 | 행동별 프레임 수. 🛑 **`--hit` 은 없다** — hit 는 2026-07-20 규격에서 제거됐다(`FRAME_OPTION_ACTIONS`) |
 | `--look/--talk/--wave N` | 8 | npc 전용 행동 프레임 수 |
-| `--scale-<action>` | **미지정 시 대화형 질문**(기본 제안 idle 1.0 · walk 0.9 · run 0.9 · attack 0.8 · hit 0.9 · death 1.0; npc 는 idle·walk 만·비대화형은 기본 제안값) | 행동별 생성 scale. 지정 안 하면 개발자에게 물어봄. `<1` 이면 모델을 작게 구워(무기/모션 128 셀 밖 잘림 방지) `.atlas` 의 `laryen.actionScale.<action>` 메타에 기록 → **게임 런타임이 1/scale 로 원래 크기 복원**([references/pipeline.md](references/pipeline.md) §6). 🛑 `--auto-fit-scale` 사용 시 이 값은 **무시** 됨(1.0 에서 자동 조정) |
+| `--scale-<action>` | **미지정 시 대화형 질문**(기본 제안 **전부 1.0** — `SCALE_PROMPT_DEFAULTS`; 비대화형은 그 값 적용) | 행동별 생성 scale. `<1` 이면 모델을 작게 구워(무기/모션 128 셀 밖 잘림 방지) `.atlas` 의 `laryen.actionScale.<action>` 메타에 기록 → **게임 런타임이 1/scale 로 원래 크기 복원**([references/pipeline.md](references/pipeline.md) §6). 🛑 과거의 **walk 0.9 · attack 0.8 일괄 축소 프리셋은 폐기**됐다(2026-07-09 셀 확대 전환) — 셀 확대는 atlas RAM(iOS OOM)·page 폭(8192 한계)을 키우므로 *잘리지 않는 행동까지 무조건 키우지 않는다*. 잘리는 행동만 `--auto-fit-scale` 이 검출해 낮춘다. 🛑 `--auto-fit-scale` 사용 시 이 값은 **무시** 됨(1.0 에서 자동 조정) |
 | `--weapon / --weapon-bone …` | — | 무기 손 본 장착 |
 | `--directions {8\|16}` | 16(npc 8) | 신규는 16 고정. 8 은 legacy 재생성 전용 |
 | `--run-animation {true\|false}` | — | mob run 애니 포함 여부(지정 시 대화형 질문 생략) |
-| `--rotation [true\|false]` | **true**(미지정 시 대화형 질문·기본 제안 Y·비대화형은 true) | 회전 packing(공간 절약·page 픽셀↓=RAM↓). 🛑 actor(pc/mob/npc)는 발 어긋남·패킹 지연 위험이 있어 대화형 질문에 n 권장 경고가 뜬다(명시적으로 `--rotation false` 로 끌 수 있음). 정적 타일/decor 는 true 가 이득. `--no-rotation` 은 false 별칭 |
+| `--rotation [true\|false]` | **actor kind 는 false · 그 외 true** (미지정 시 대화형 질문·기본 제안 Y·**비대화형은 `kind not in ACTOR_KINDS`**) | 회전 packing(공간 절약·page 픽셀↓=RAM↓). 🛑 **`ACTOR_KINDS = ALL_KINDS` 라 pc·mob·npc·boss·minion 은 전부 actor** — 비대화형·`--auto` 어느 경로로도 **자동으로 false** 가 된다(발 어긋남·16방향 패킹 20분+ 방지). 대화형 질문에는 n 권장 경고가 뜬다. 정적 타일/decor 는 true 가 이득. `--no-rotation` 은 false 별칭 |
 | `--strip-x-whitespaces [true\|false]` | **true**(미지정 시 대화형·비대화형 true) | 가로(X) 여백 trim. 좌우 투명 여백 제거 → 아틀라스 폭·page 픽셀(=RAM)↓(발 y 무관·안전) |
 | `--strip-y-whitespaces [true\|false]` | **true**(미지정 시 대화형·비대화형 true) | 세로(Y) 여백 trim. 상하 투명 여백 제거 → page 높이·RAM↓. 발 점프(drop off)는 pack 후 `.atlas` offsetY 를 top-left 로 보정해 방지(libGDX bottom-left↔flame top-left 좌표계 정합, `fix_offset_y`) |
 | `--strip-whitespace`·`--keep-whitespace` | (하위호환) | `--strip-x/y-whitespaces` 를 **동시** 설정하는 별칭 |
@@ -210,7 +210,7 @@ flutter 실행 없이 **생성 이미지 검사만으로** 잡아 자동 조정�
 | `--verbose` | off | Blender/packer **전체 로그** 출력. 미지정(기본) 시 **간략 진행**만: 단계 `[1]렌더 [2]packing`, `N/총장(%)·장/s·ETA·현재 행동`, 단계별·총 소요시간(`✓ 렌더 완료 — 1024장 · 3m18s · 5.2장/s`) |
 | `--verify-cells [true\|false]` | **true** | 렌더 후 낱장 프레임의 **cell 잘림(clip) 자동 검사**(flutter 불필요). run/attack 등 큰 모션이 셀 밖으로 잘리면 행동별 권장 `--scale-<action>` 출력. `--build-only`(재packing) 시에도 기존 프레임을 검사해 리포트(auto-fit 은 렌더 경로만) |
 | `--auto-fit-scale` | off | 잘린 행동 발견 시 **scale 을 낮춰 자동 재렌더**(최대 6회·0.6 하한 → 잘림 0 수렴). pc/npc/mob 큰 모션·칼끝을 사람 개입 없이 셀 안에 맞춤. 🛑 **이 옵션을 켜면 `--scale-<action>`·전역 `--scale` 은 모두 무시** 되고 1.0(원본)에서 시작해 필요한 만큼만 하강(대화형 scale 질문도 건너뜀) |
-| `--auto` | off | 🚀 **원클릭 최적 프리셋** — `--texture-pack true --auto-fit-scale --color-compression true --vivid 9 --rotation true --strip-x-whitespaces true --strip-y-whitespaces true --shading eevee` 를 한 번에 켠다(`shading` 의 `true`=`eevee`). **`--kind mob` 이면 `--run-animation false` 도 자동**(run 애니 제외·디스크↓). **대화형 질문(texture-pack·color-compression·rotation·strip·scale·run-animation) 전부 없이** pc/mob/npc 를 잘림 없이 자동 조정 + 최대 압축으로 패킹. 🛑 개별 옵션을 함께 명시하면 **그 값이 우선**(auto 는 미지정 항목만 채움) — 예 `--auto --run-animation true` 는 mob 이라도 run 포함, `--auto --rotation false` 는 회전만 끄고 나머지 프리셋 유지. auto-fit 이 켜지므로 `--scale-<action>`·전역 `--scale` 무시(1.0 자동 하강) |
+| `--auto` | off | 🚀 **원클릭 최적 프리셋** — `--texture-pack true --auto-fit-scale --color-compression true --vivid 9 --strip-x-whitespaces true --strip-y-whitespaces true --shading eevee` 를 한 번에 켠다(`shading` 의 `true`=`eevee`). **rotation 은 `kind not in ACTOR_KINDS` 로 정해지므로 pc/mob/npc/boss/minion 이면 자동 false** — `--rotation false` 를 따로 병기할 필요가 없다. **`--kind mob` 이면 `--run-animation false` 도 자동**(run 애니 제외·디스크↓). **대화형 질문(texture-pack·color-compression·rotation·strip·scale·run-animation) 전부 없이** 잘림 없이 자동 조정 + 최대 압축으로 패킹. 🛑 개별 옵션을 함께 명시하면 **그 값이 우선**(auto 는 미지정 항목만 채움) — 예 `--auto --run-animation true` 는 mob 이라도 run 포함. auto-fit 이 켜지므로 `--scale-<action>`·전역 `--scale` 무시(1.0 자동 하강) |
 
 ## 런타임: Flutter/Flame 이 `.atlas`/`.png` 를 파싱해 게임 월드에 표시
 
@@ -307,12 +307,22 @@ screencapture -x -R "x,y,w,h" tmp/proof.png     # 위 bounds 로 R 지정
 추가 후에는 hot reload 로 안 잡히므로 앱을 재실행**(`flutter run` 종료 후 재실행 또는 Hot
 restart)해야 새 atlas 가 번들된다. 코드 변경만이면 종료→재실행이 가장 확실하다.
 
-### ⚠️ 이 리포엔 `scripts/compress_image.py` 가 없다 — 색 압축 자동 스킵
+### ⚠️ 색 압축은 **프로젝트 루트의 `scripts/compress_image.py` 유무**에 달려 있다
 
-`--color-compression true`(기본)이지만 이 리포 루트에 `scripts/compress_image.py` 가
-없어서 256색 양자화가 **스킵**되고 무손실 RGBA PNG 가 그대로 남는다(예: dreyer.png ≈
-7.5MB). atlas·게임 동작·RAM 엔 무관하고 **디스크/번들 용량만 커진다**. 줄이려면 그
-스크립트를 두거나 `pngquant`(`pngquant --force 256 dreyer.png -o dreyer.png`)로 후처리.
+`--color-compression true`(기본)이면 `sheet.py` 가 `_find_project_root()` 로 찾은 루트의
+`scripts/compress_image.py` 를 import 해 256색 양자화를 **in-place** 로 돌리고, import 가
+실패하면 `uv run --with numpy --with pillow` 서브프로세스로 폴백한다.
+
+- **그 파일이 있는 프로젝트**(예: laryen)에서는 **정상 동작한다** — 예전에 "이 리포엔 없어서
+  스킵된다" 고 적혀 있던 서술은 **texture-packer 를 단독 clone 한 환경**의 이야기였다.
+- **판정은 파일 존재 여부를 추측하지 말고 로그로 한다** — 출력에 **`⚠️ 압축 실패` 가 없으면
+  압축된 것**이다.
+- 없는 환경이면 256색 양자화가 스킵돼 무손실 RGBA PNG 가 그대로 남는다(디스크/번들만 커지고
+  **atlas·게임 동작·RAM 엔 무관**). 줄이려면 그 스크립트를 루트 `scripts/` 에 두거나
+  `pngquant --force 256 <파일>.png -o <파일>.png` 로 후처리한다.
+
+🛑 **압축은 디스크만 줄인다. RAM 은 1바이트도 줄지 않는다**(`RAM ≈ 원본 PNG W × H × 4`).
+RAM 을 줄이는 길은 셀 크기·프레임 수·자산 종류를 줄이는 것뿐이다.
 
 ## 절대 규칙
 
