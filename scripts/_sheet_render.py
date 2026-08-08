@@ -648,10 +648,14 @@ print(f"####FRAMING mode=body-only(무기 {len(_wnames)}개 제외) margin x{MAR
       f"scale(전역)x{SCALE} ortho_base={ortho:.3f} body_h={char_h:.2f} body_w={char_w:.2f}")
 
 # Hips 추적 타겟 (root motion 상쇄 = in-place cycle)
-_hips0 = (arm.matrix_world @ arm.pose.bones[HIPS].head) if arm.pose.bones.get(HIPS) else target
+# 🛑 `HIPS` 는 미검출 시 None 이다(위 `detect_hips` — 비인간형 리그: 거미·드론 등).
+# `pose.bones.get(None)` 은 KeyError 를 일으켜 렌더 전체를 죽이므로 **반드시 먼저 가드**한다.
+# HIPS 가 없으면 root motion 추적을 포기하고 타깃을 고정한다(이미 의도된 폴백).
+_hips_pb = arm.pose.bones.get(HIPS) if HIPS else None
+_hips0 = (arm.matrix_world @ _hips_pb.head) if _hips_pb else target
 _ofs = target - _hips0
 def cur_target():
-    pb = arm.pose.bones.get(HIPS)
+    pb = arm.pose.bones.get(HIPS) if HIPS else None
     return (arm.matrix_world @ pb.head) + _ofs if pb else target
 
 # ── 카메라 ────────────────────────────────────────────────────────────
