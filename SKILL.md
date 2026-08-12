@@ -107,8 +107,9 @@ python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/characters/
 python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/characters/boss/halucion_boss/halucion_boss.blend
 
 # 프레임 수 등 일부만 바꾸고 싶을 때 — 준 옵션이 추론·auto 보다 우선한다
+# (미지정 시 kind 기본값: mob/boss/minion = idle8·walk10·attack10·death6, pc = 8·12·16·8·run12)
 python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/characters/mob/chassis/chassis.blend \
-  --idle 8 --walk 12 --attack 16 --death 8
+  --idle 8 --walk 10 --attack 10 --death 6
 
 # NPC — game-assets/characters/npc/<name>/ 에서 자동으로 찾는다
 python3 .claude/skills/texture-packer/scripts/sheet.py --kind npc --name shopkeeper
@@ -194,7 +195,7 @@ flutter 실행 없이 **생성 이미지 검사만으로** 잡아 자동 조정�
 | `--vivid 1-9` | 9 | 밝기(exposure)+대비(gamma) 부스트. 1=무보정, 9=최대(기본) |
 | `--shading {eevee\|texture}` | eevee | eevee=PBR 3점 조명, texture=WORKBENCH TEXTURE(금속/갑옷용) |
 | `--render-res N` | max(256,cell) | frame 렌더 해상도(→ 128 로 자동 축소, `--scale-frames`) |
-| `--idle/--walk/--attack/--death/--run N` | 8/12/16/8/12 | 행동별 프레임 수. 🛑 **`--hit` 은 없다** — hit 는 2026-07-20 규격에서 제거됐다(`FRAME_OPTION_ACTIONS`) |
+| `--idle/--walk/--attack/--death/--run N` | **kind 마다 다르다** — pc/npc `8/12/16/8/12`(`DEFAULT_FRAMES`) · **mob·boss·minion `8/10/10/6/10`**(`MONSTER_FRAMES`, 2026-08-12) | 행동별 프레임 수. 🛑 **`--hit` 은 없다** — hit 는 2026-07-20 규격에서 제거됐다(`FRAME_OPTION_ACTIONS`). 몬스터가 pc 보다 적은 이유·재생 속도 보존은 아래 §몬스터 프레임 규격 참조 |
 | `--look/--talk/--wave N` | 8 | npc 전용 행동 프레임 수 |
 | `--scale-<action>` | **미지정 시 대화형 질문**(기본 제안 **전부 1.0** — `SCALE_PROMPT_DEFAULTS`; 비대화형은 그 값 적용) | 행동별 생성 scale. `<1` 이면 모델을 작게 구워(무기/모션 128 셀 밖 잘림 방지) `.atlas` 의 `laryen.actionScale.<action>` 메타에 기록 → **게임 런타임이 1/scale 로 원래 크기 복원**([references/pipeline.md](references/pipeline.md) §6). 🛑 과거의 **walk 0.9 · attack 0.8 일괄 축소 프리셋은 폐기**됐다(2026-07-09 셀 확대 전환) — 셀 확대는 atlas RAM(iOS OOM)·page 폭(8192 한계)을 키우므로 *잘리지 않는 행동까지 무조건 키우지 않는다*. 잘리는 행동만 `--auto-fit-scale` 이 검출해 낮춘다. 🛑 `--auto-fit-scale` 사용 시 이 값은 **무시** 됨(1.0 에서 자동 조정) |
 | `--weapon / --weapon-bone …` | — | 무기 손 본 장착 |
@@ -337,10 +338,31 @@ RAM 을 줄이는 길은 셀 크기·프레임 수·자산 종류를 줄이는 �
     런타임은 `.atlas` 헤더의 `laryen.directions: 8` 을 읽어 8칸 table 을 만든 뒤 16방향 facing 을
     `nearest8FromDir16` 으로 근사한다. 이 세 가지(생성 라벨·메타·런타임 근사)는 한 세트라
     하나만 바꾸면 방향이 통째로 어긋난다.
+- 🛑 **몬스터 프레임 규격 — `idle 8 · walk 10 · attack 10 · death 6`(34프레임)**
+  (2026-08-12 사용자 지시, `MONSTER_FRAMES`). pc/npc 는 종전대로 `8/12/16/8`+`run 12`(44프레임).
+  - **왜 몬스터만 줄이나**: RAM ≈ page W×H×4 이고 packing 충전율이 89% 라 **셀 수 감축이 그대로
+    RAM 감축**이다(전 종 실측 1112.4→849.6MB, **-23.6%** · 디스크 83.4→63.7MB). 화면에 동시에
+    뜨는 개체 수가 압도적으로 많은 쪽이 몬스터라 같은 비율이라도 절대 절감량이 훨씬 크다.
+    행동별 실픽셀 비중(mob 53종 실측) attack 38.4% · walk 26.5% · idle 17.9% · death 16.9% →
+    무거운 attack(16→10)과 잠깐만 보이는 death(8→6)를 먼저 깎고, 상시 노출되는 idle 은 8 유지.
+  - **화질 손실 0** — 축소 디코드(저사양 60%)와 달리 픽셀은 그대로 두고 낱장 수만 줄인다.
+    확보한 예산을 축소 비율 완화에 되돌려 쓸 수 있다(`REGRESSION.md` §16).
+  - 🛑 **재생 속도는 클라가 흡수한다** — `actor_animation_set.dart` 의 `_atlasActions` 는
+    (낱장당 시간)이 아니라 **한 바퀴 목표 시간**을 갖고 `stepTime = cycle / frames.length` 로
+    나눠 쓴다. 그래서 pc walk 12장과 mob walk 10장이 **둘 다 0.96초**다. 이 설계를 되돌려
+    stepTime 을 고정하면 프레임을 줄인 자산만 애니가 빨라진다(발이 헛도는 "종종걸음").
+  - **기존 자산 재작업은 Blender 재렌더 없이** 가능하다 — 출고 `.atlas`+`.png` 에서 낱장을
+    복원 → 균등 데시메이션 → `--build-only` 재패킹(종당 ~16초, 전 종 65개 약 4분). 이때
+    ① `--scale-frames 1.0`(자동값 0.5 는 이미 최종 크기인 낱장을 반토막 낸다)
+    ② 원본 `laryen.actionScale.<action>` 을 `--scale-<action>` 으로 **재주입**(빠뜨리면 공격 시
+    몬스터 크기가 틀어진다) ③ 8방향 자산은 `--directions 8` — 셋 다 필수다.
+- 🛑 **`--build-only` 는 Mixamo rig 검사를 하지 않는다** — Blender 를 아예 띄우지 않아 모델·애니의
+  rig 규격이 결과에 영향을 주지 않기 때문이다. 이 예외가 없으면 비인간형 자산(minion 등)은
+  *재패킹조차* 못 한다(실측 `mini_red`). 렌더 경로(`--build-only` 없음)에서는 종전대로 검사한다.
 - **캐릭터·애니 모델은 Mixamo rig**(본 이름 `mixamorig:`). PC 는 부위별 overlay 합성 없이
   세트 단위 통짜 sheet. 몬스터는 장비 분리 없이 전체 모델 렌더.
 - **RAM 은 W×H×4 로 고정** — `--color-compression` 은 디스크/번들 용량만 줄인다(OOM 무관).
-  메모리 절감은 픽셀 축소(`--cell-size`)로만.
+  메모리 절감은 픽셀 축소(`--cell-size`)·**프레임 수 감축**으로만.
 - **검증 불가 시 원점 복구** — packing 결과를 실제 Flame 앱으로 시각 검증하지 못하면 커밋하지 않는다.
 
 ## 관련 워크플로우
