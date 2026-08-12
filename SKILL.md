@@ -107,9 +107,9 @@ python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/characters/
 python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/characters/boss/halucion_boss/halucion_boss.blend
 
 # 프레임 수 등 일부만 바꾸고 싶을 때 — 준 옵션이 추론·auto 보다 우선한다
-# (미지정 시 kind 기본값: mob/boss/minion = idle8·walk10·attack10·death6, pc = 8·12·16·8·run12)
+# (미지정 시 kind 기본값: mob/boss/minion = idle8·walk12·attack10·death6, pc = 8·12·16·8·run12)
 python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/characters/mob/chassis/chassis.blend \
-  --idle 8 --walk 10 --attack 10 --death 6
+  --idle 8 --walk 12 --attack 10 --death 6
 
 # NPC — game-assets/characters/npc/<name>/ 에서 자동으로 찾는다
 python3 .claude/skills/texture-packer/scripts/sheet.py --kind npc --name shopkeeper
@@ -263,8 +263,8 @@ python3 .claude/skills/texture-packer/scripts/sheet.py \
   --scale-attack .8
 ```
 
-→ `flutter/assets/mob/dreyer/dreyer.{png,atlas}`(16방향 × idle8·walk10·attack10·death6
-= **544 프레임** — mob 은 `MONSTER_FRAMES`, 2026-08-12). dreyer 는 hand 본에 **hammer(망치)** 가 붙어있어 body-only
+→ `flutter/assets/mob/dreyer/dreyer.{png,atlas}`(16방향 × idle8·walk12·attack10·death6
+= **576 프레임** — mob 은 `MONSTER_FRAMES`, 2026-08-12). dreyer 는 hand 본에 **hammer(망치)** 가 붙어있어 body-only
 framing 이 자동 적용(무기 1개 제외)되고, `--scale-attack .8` 은 `.atlas` 에
 `laryen.actionScale.attack: 0.8` 메타로 주입 → 런타임이 1/0.8=**1.25 로 화면 보정**한다.
 
@@ -338,10 +338,10 @@ RAM 을 줄이는 길은 셀 크기·프레임 수·자산 종류를 줄이는 �
     런타임은 `.atlas` 헤더의 `laryen.directions: 8` 을 읽어 8칸 table 을 만든 뒤 16방향 facing 을
     `nearest8FromDir16` 으로 근사한다. 이 세 가지(생성 라벨·메타·런타임 근사)는 한 세트라
     하나만 바꾸면 방향이 통째로 어긋난다.
-- 🛑 **몬스터 프레임 규격 — `idle 8 · walk 10 · attack 10 · death 6`(34프레임)**
+- 🛑 **몬스터 프레임 규격 — `idle 8 · walk 12 · attack 10 · death 6`(36프레임)**
   (2026-08-12 사용자 지시, `MONSTER_FRAMES`). pc/npc 는 종전대로 `8/12/16/8`+`run 12`(44프레임).
   - **왜 몬스터만 줄이나**: RAM ≈ page W×H×4 이고 packing 충전율이 89% 라 **셀 수 감축이 그대로
-    RAM 감축**이다(전 종 실측 1112.4→849.6MB, **-23.6%** · 디스크 83.4→63.7MB). 화면에 동시에
+    RAM 감축**이다(전 종 실측 1112.4→899.3MB, **-19.2%** · 디스크 83.4→67.4MB). 화면에 동시에
     뜨는 개체 수가 압도적으로 많은 쪽이 몬스터라 같은 비율이라도 절대 절감량이 훨씬 크다.
     행동별 실픽셀 비중(mob 53종 실측) attack 38.4% · walk 26.5% · idle 17.9% · death 16.9% →
     무거운 attack(16→10)과 잠깐만 보이는 death(8→6)를 먼저 깎고, 상시 노출되는 idle 은 8 유지.
@@ -349,7 +349,7 @@ RAM 을 줄이는 길은 셀 크기·프레임 수·자산 종류를 줄이는 �
     확보한 예산을 축소 비율 완화에 되돌려 쓸 수 있다(`REGRESSION.md` §16).
   - 🛑 **재생 속도는 클라가 흡수한다** — `actor_animation_set.dart` 의 `_atlasActions` 는
     (낱장당 시간)이 아니라 **한 바퀴 목표 시간**을 갖고 `stepTime = cycle / frames.length` 로
-    나눠 쓴다. 그래서 pc walk 12장과 mob walk 10장이 **둘 다 0.96초**다. 이 설계를 되돌려
+    나눠 쓴다. 그래서 attack 이 pc 16장·mob 10장이어도 **둘 다 0.80초**다. 이 설계를 되돌려
     stepTime 을 고정하면 프레임을 줄인 자산만 애니가 빨라진다(발이 헛도는 "종종걸음").
   - **기존 자산 재작업은 Blender 재렌더 없이** 가능하다 — 출고 `.atlas`+`.png` 에서 낱장을
     복원 → 균등 데시메이션 → `--build-only` 재패킹(종당 ~16초, 전 종 65개 약 4분). 이때

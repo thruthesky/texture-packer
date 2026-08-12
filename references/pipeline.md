@@ -179,8 +179,8 @@ DEFAULT_CELL_SIZE  = 128   # atlas orig/cell (2026-07-05 pc/npc/mob 전부 128 �
 # --scale-frames 자동 = CELL/RENDER = 128/256 = 0.5
 # pc/npc 기본 프레임 (hit 는 2026-07-20 규격에서 제거됨 — 아래 DEFAULT_ACTIONS 참조)
 DEFAULT_FRAMES  = {"idle":8, "walk":12, "attack":16, "death":8, "run":12, "look":8, "talk":8, "wave":8}
-# 🛑 몬스터(mob/boss/minion)는 별도 — 34프레임 (2026-08-12). KIND_POLICY["frames"] 로 연결된다.
-MONSTER_FRAMES  = {"idle":8, "walk":10, "attack":10, "death":6, "run":10}
+# 🛑 몬스터(mob/boss/minion)는 별도 — 36프레임 (2026-08-12). KIND_POLICY["frames"] 로 연결된다.
+MONSTER_FRAMES  = {"idle":8, "walk":12, "attack":10, "death":6, "run":12}
 DEFAULT_ACTIONS = ["idle","walk","attack","death","run"]         # pc col 순서(hit 제거)
 MOB_ACTIONS     = ["idle","walk","attack","death"]               # 몬스터(run 제외)
 NPC_ACTIONS     = ["idle"]                                       # npc 는 idle 단일(24프레임)

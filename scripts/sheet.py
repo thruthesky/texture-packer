@@ -206,10 +206,10 @@ BOSS_DISPLAY_SIZE = 256
 DEFAULT_FRAMES  = {"idle": 8, "walk": 12, "attack": 16, "death": 8, "run": 12,
                    "look": 8, "talk": 8, "wave": 8}
 # 🛑 몬스터(mob/boss/minion) 전용 프레임 수 — pc 보다 적게 굽는다(2026-08-12 사용자 지시).
-#     idle 8 · walk 10 · attack 10 · death 6  = 34프레임(pc 기본 44 대비 -23%)
+#     idle 8 · walk 12 · attack 10 · death 6  = 36프레임(pc 기본 44 대비 -18%)
 #
 # 왜 몬스터만 줄이나: 아틀라스 RAM ≈ page W×H×4 이고 packing 충전율이 89% 라 **셀 수 감축이
-# 그대로 RAM 감축**이다(실측 crusher 704→544셀에서 16.56→12.57MB, -24%). 화면에 동시에 뜨는
+# 그대로 RAM 감축**이다(실측 crusher 704→576셀에서 16.56→13.3MB, -20%). 화면에 동시에 뜨는
 # 개체 수가 압도적으로 많은 쪽이 몬스터라(PC 는 대개 1~수 명) 같은 비율을 줄여도 절대 절감량이
 # 훨씬 크다. 반대로 PC 는 플레이어가 자기 캐릭터를 계속 들여다보므로 모션 부드러움을 유지한다.
 # 행동별 배분 근거(mob 53종 실픽셀 실측): attack 38.4% · walk 26.5% · idle 17.9% · death 16.9%
@@ -219,10 +219,10 @@ DEFAULT_FRAMES  = {"idle": 8, "walk": 12, "attack": 16, "death": 8, "run": 12,
 #    낱장 수만 줄이므로, 확보한 예산을 축소 비율 완화에 되돌려 쓸 수 있다(REGRESSION.md §16).
 # 🛑 프레임 수를 바꾸면 런타임 재생 시간이 함께 변한다 — 클라의
 #    `actor_animation_set.dart _atlasActions` 는 (낱장당 시간)이 아니라 **한 바퀴 목표 시간**을
-#    갖고 `stepTime = cycle / frames.length` 로 나눠 쓰므로, 낱장이 10장이든 12장이든 걷기 한
+#    갖고 `stepTime = cycle / frames.length` 로 나눠 쓰므로, 낱장이 10장이든 16장이든 공격 한
 #    바퀴가 같은 시간이다. 그 설계 덕에 여기 숫자를 자유롭게 조정해도 이동 속도가 어긋나지 않는다.
-#    (고정 stepTime 이던 시절에는 walk 12→10 이 그대로 "1.2배 빠른 종종걸음"이 됐다.)
-MONSTER_FRAMES  = {"idle": 8, "walk": 10, "attack": 10, "death": 6, "run": 10}
+#    (고정 stepTime 이던 시절에는 attack 16→10 이 그대로 "1.6배 빠른 공격"이 됐다.)
+MONSTER_FRAMES  = {"idle": 8, "walk": 12, "attack": 10, "death": 6, "run": 12}
 # 🛑 hit(피격) 애니메이션 제거(2026-07-20): 게임 플레이 중 hit 포즈가 화면에 사실상 표현되지
 # 않는데(피격 시 white tint flash·파티클 임팩트·타격 사운드가 sprite 포즈를 덮음) atlas 는 hit
 # 8프레임 × 16방향 = 128셀을 캐릭터마다 담아 디스크/번들/RAM(원본 PNG W×H×4)만 키웠다. hit 를
@@ -1991,7 +1991,7 @@ def main():
                 assert_mixamo_rig(anim_file(a), f"애니메이션 '{a}'({os.path.basename(anim_file(a))})")
 
     # 행동별 프레임 수 — kind 정책(KIND_POLICY["frames"]) 우선, 없는 행동만 DEFAULT_FRAMES 로 보충.
-    # 몬스터 계열(mob/boss/minion)은 MONSTER_FRAMES(idle8·walk10·attack10·death6)를 쓴다.
+    # 몬스터 계열(mob/boss/minion)은 MONSTER_FRAMES(idle8·walk12·attack10·death6)를 쓴다.
     _kind_frames = policy.get("frames") or DEFAULT_FRAMES
     frames = {a: int(_kind_frames.get(a, DEFAULT_FRAMES.get(a, 8))) for a in actions}
     if args.kind == "npc":
