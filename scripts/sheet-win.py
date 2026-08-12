@@ -887,7 +887,8 @@ def prompt_missing(args):
     #    128 셀 밖으로 잘리는 것을 막음·body 원본 화질 유지) `.atlas` 헤더 `laryen.actionScale.<action>` 메타에 기록하고,
     #    게임 런타임(actor_animation_set.dart parseDisplayScales)이 표시 배율 1/scale 로 *원래 크기
     #    복원* 한다. 비대화형이면 기본 제안값을 그대로 쓴다. npc 는 idle/walk 만(전투 행동 없음).
-    #    🛑 --auto-fit-scale 이면 --scale-<action> 을 모두 무시(1.0 에서 자동 조정)하므로 아예 묻지 않는다.
+    #    🛑 With --auto-fit-scale we do not ask at all: an explicit --scale-<action> becomes the
+    #    starting scale and the rest start at 1.0, with auto-fit lowering them as needed.
     # 🛑 npc 는 idle 단일(무기 없음·잘림 없음)이라 scale 조정이 불필요 → --scale-idle/walk 질문을
     # 하지 않는다(빈 목록, scale 1.0 고정). auto-fit-scale 이 켜진 경우도 질문 생략(자동 하강).
     scale_actions = ([] if args.auto_fit_scale or args.kind == "npc" else
@@ -1678,7 +1679,8 @@ def main():
                              + (f"(if omitted, interactive prompt · default suggestion {_pd:g} · {_pd:g} when non-interactive)"
                                 if _pd is not None else "(if omitted = global --scale)")
                              + ". <1=enlarge the cell (canvas) by 1/scale to fit the weapon tip (body keeps original resolution) → game runtime displays at 1/scale. "
-                             + "🛑 When using --auto-fit-scale this value is *ignored* and auto-adjusted from 1.0.")
+                             + "🛑 With --auto-fit-scale this value is the *starting* scale (actions without it start at 1.0) "
+                             + "and auto-fit only lowers it further if clipping remains.")
     ap.add_argument("--weapon", default=None,
                     help="Weapon model (.fbx/.glb) — attached to the character's hand bone and rendered together. 🛑 requires a T-pose character.")
     ap.add_argument("--weapon-bone", default=None,
@@ -1744,13 +1746,15 @@ def main():
                          "animation · disk↓). Without interactive prompts, "
                          "auto-adjusts pc/mob/npc to avoid clipping + packs with max compression. 🛑 If individual options are "
                          "also specified, *those values take priority* (auto fills only unspecified items) — e.g. `--auto --rotation "
-                         "false` turns off only rotation and keeps the rest of the preset. Since auto-fit is enabled, --scale-<action> and "
-                         "the global --scale are ignored and auto-decrease from 1.0.")
+                         "false` turns off only rotation and keeps the rest of the preset. Since auto-fit is enabled, each "
+                         "--scale-<action> you pass becomes that action's *starting* scale (others start at 1.0) and auto-fit "
+                         "lowers it from there; the global --scale is ignored.")
     ap.add_argument("--auto-fit-scale", dest="auto_fit_scale", action="store_true",
                     help="When a clipped action is found, lower the scale and *auto re-render* (up to 6 iterations · 0.667 floor = cell 1.5x/192, converging "
                          "to 0 clipping). Auto-adjusts without human intervention so that large motions/blade tips of pc/npc/mob fit within the cell. "
-                         "🛑 When this option is enabled, --scale-<action> and the global --scale are *all ignored*, starting from 1.0 (original) "
-                         "and decreasing only as much as auto-fit needs (the interactive scale prompt is also skipped).")
+                         "🛑 Start point: an action given --scale-<action> starts from that value, every other action starts from "
+                         "1.0 (original); the global --scale is ignored. auto-fit only decreases from there, as much as it needs "
+                         "(the interactive scale prompt is also skipped).")
     # ── TexturePacker 전용 ──
     ap.add_argument("--java", default="", dest="java_bin", help="java.exe executable (default auto-detect)")
     ap.add_argument("--packer-cp", default="",
@@ -2037,13 +2041,26 @@ def main():
     action_scales = {}
     for a in actions:
         if args.auto_fit_scale:
-            # 🛑 --auto-fit-scale 은 --scale-<action>·전역 --scale 을 *모두 무시* 하고 1.0(원본 크기)
-            # 에서 시작한다 — auto-fit 이 잘림을 검사해 필요한 만큼만 자동 하강시키므로 사람이 준 시작
-            # scale 은 의미가 없다(사용자 지시 2026-07-07). 잘림이 없으면 1.0 그대로(축소 안 함).
-            action_scales[a] = 1.0
+            # --auto-fit-scale STARTING scale (2026-08-12 user instruction, revising 2026-07-07):
+            # an action given an explicit --scale-<action> starts from that value; every other
+            # action starts from 1.0 (original size). The global --scale stays ignored here.
+            # Rationale: a human who already measured the clipping and passed 0.8 should not have
+            # that discarded — auto-fit would otherwise re-walk the same descent from 1.0, burning
+            # extra re-render passes to land where it was already told to start.
+            # auto-fit only ever LOWERS from this start (never raises), so an explicit value is a
+            # ceiling, and no clipping means the start value is kept as-is.
+            # 🛑 Keep identical to sheet.py — a one-sided edit silently reverts on that OS.
+            ov = getattr(args, f"scale_{a}")
+            action_scales[a] = float(ov) if ov is not None else 1.0
         else:
             ov = getattr(args, f"scale_{a}")
             action_scales[a] = float(ov) if ov is not None else float(args.scale)
+    if args.auto_fit_scale:
+        _given = {a: s for a, s in action_scales.items() if abs(s - 1.0) > 1e-6}
+        if _given:
+            print("  ℹ️  auto-fit start scale (from --scale-<action>): "
+                  + " · ".join(f"{a}={s:g}" for a, s in _given.items())
+                  + " — other actions start at 1.0")
     if args.render_res:
         render_res = args.render_res
     elif args.draft:
