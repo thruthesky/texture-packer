@@ -177,9 +177,13 @@ def compress_pages(pages, colors=256):
 DEFAULT_RENDER_RES = 256   # frame 렌더 해상도
 DEFAULT_CELL_SIZE  = 128   # atlas orig/cell (2026-07-05 pc/npc/mob 전부 128 통일)
 # --scale-frames 자동 = CELL/RENDER = 128/256 = 0.5
-DEFAULT_FRAMES  = {"idle":8, "walk":12, "attack":16, "hit":8, "death":8, "run":12, "look":?, "talk":?, "wave":?}
-DEFAULT_ACTIONS = ["idle","walk","attack","hit","death","run"]   # pc/mob col 순서
-NPC_ACTIONS     = ["idle","look","talk","walk","wave"]           # npc col 순서
+# pc/npc 기본 프레임 (hit 는 2026-07-20 규격에서 제거됨 — 아래 DEFAULT_ACTIONS 참조)
+DEFAULT_FRAMES  = {"idle":8, "walk":12, "attack":16, "death":8, "run":12, "look":8, "talk":8, "wave":8}
+# 🛑 몬스터(mob/boss/minion)는 별도 — 34프레임 (2026-08-12). KIND_POLICY["frames"] 로 연결된다.
+MONSTER_FRAMES  = {"idle":8, "walk":10, "attack":10, "death":6, "run":10}
+DEFAULT_ACTIONS = ["idle","walk","attack","death","run"]         # pc col 순서(hit 제거)
+MOB_ACTIONS     = ["idle","walk","attack","death"]               # 몬스터(run 제외)
+NPC_ACTIONS     = ["idle"]                                       # npc 는 idle 단일(24프레임)
 ```
 
 - 과거 pc/npc 160·mob 128 로 갈렸으나 display 가 어차피 128 이라 pc/npc 160 의 여유 픽셀은

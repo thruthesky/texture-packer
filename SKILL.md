@@ -263,8 +263,8 @@ python3 .claude/skills/texture-packer/scripts/sheet.py \
   --scale-attack .8
 ```
 
-→ `flutter/assets/mob/dreyer/dreyer.{png,atlas}`(16방향 × idle8·walk12·attack16·hit8·
-death8 = 832 프레임). dreyer 는 hand 본에 **hammer(망치)** 가 붙어있어 body-only
+→ `flutter/assets/mob/dreyer/dreyer.{png,atlas}`(16방향 × idle8·walk10·attack10·death6
+= **544 프레임** — mob 은 `MONSTER_FRAMES`, 2026-08-12). dreyer 는 hand 본에 **hammer(망치)** 가 붙어있어 body-only
 framing 이 자동 적용(무기 1개 제외)되고, `--scale-attack .8` 은 `.atlas` 에
 `laryen.actionScale.attack: 0.8` 메타로 주입 → 런타임이 1/0.8=**1.25 로 화면 보정**한다.
 

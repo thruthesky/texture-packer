@@ -201,6 +201,16 @@ BOSS_DISPLAY_SIZE = 256
 # 단일 통합 grid sheet 는 Σframes×cell (W) × directions×cell (H).
 DEFAULT_FRAMES  = {"idle": 8, "walk": 12, "attack": 16, "death": 8, "run": 12,
                    "look": 8, "talk": 8, "wave": 8}
+# 🛑 몬스터(mob/boss/minion) 전용 프레임 수 — pc 보다 적게 굽는다(2026-08-12 사용자 지시).
+#     idle 8 · walk 10 · attack 10 · death 6 = 34프레임(pc 기본 44 대비 -23%)
+# 🛑 **mac 쪽 sheet.py 의 MONSTER_FRAMES 와 반드시 같은 값을 유지할 것** — 한쪽만 고치면 그 OS 에서
+#    재생성할 때 프레임 수가 조용히 되돌아가 RAM 이 다시 불어난다(위 boss cell 경고와 같은 이유).
+#    실제로 2026-08-12 1차 작업이 mac sheet.py 만 고쳐 이 파일이 누락됐고, cowork 감사에서 잡혔다.
+# 근거: atlas RAM ≈ page W×H×4 이고 packing 충전율이 89% 라 셀 수 감축이 그대로 RAM 감축이다
+#      (몬스터 65종 실측 1112.4 → 849.6MB, -23.6%). 화질 손실은 0(픽셀은 그대로, 낱장 수만 감소).
+#      재생 속도는 클라가 흡수한다(actor_animation_set.dart `_atlasActions` = 한 바퀴 목표 시간,
+#      stepTime = cycle / frames.length).
+MONSTER_FRAMES  = {"idle": 8, "walk": 10, "attack": 10, "death": 6, "run": 10}
 # 🛑 hit(피격) 애니메이션 제거(2026-07-20): 게임 플레이 중 hit 포즈가 화면에 사실상 표현되지
 # 않는데(피격 시 white tint flash·파티클 임팩트·타격 사운드가 sprite 포즈를 덮음) atlas 는 hit
 # 8프레임 × 16방향 = 128셀을 캐릭터마다 담아 디스크/번들/RAM(원본 PNG W×H×4)만 키웠다. hit 를
@@ -246,24 +256,29 @@ DIR16_LABELS_SSOT = ["E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW",
 # 이 테이블에 한 줄 추가하는 것으로 끝나야 한다(흩어진 튜플 누락 = 조용한 자산 손상).
 #   directions : 강제 방향 수(None = 기본 16) · cell : 기본 cell px(화질 축)
 #   display    : 게임 화면 표시 px(크기 축 — 64 면 화면에서 절반 크기)
+#   frames     : 행동별 기본 프레임 수(--idle/--walk/… 로 override). 몬스터 계열은 MONSTER_FRAMES.
 KIND_POLICY = {
     "pc":     {"directions": None, "cell": DEFAULT_CELL_SIZE, "display": RUNTIME_DISPLAY_SIZE,
-               "actions": DEFAULT_ACTIONS, "model_dir": "game-assets/characters/pc"},
+               "actions": DEFAULT_ACTIONS, "frames": DEFAULT_FRAMES,
+               "model_dir": "game-assets/characters/pc"},
     "mob":    {"directions": None, "cell": DEFAULT_CELL_SIZE_MOB, "display": RUNTIME_DISPLAY_SIZE,
-               "actions": MOB_ACTIONS, "model_dir": "game-assets/characters/mob"},
+               "actions": MOB_ACTIONS, "frames": MONSTER_FRAMES,
+               "model_dir": "game-assets/characters/mob"},
     "npc":    {"directions": 1, "cell": DEFAULT_CELL_SIZE, "display": RUNTIME_DISPLAY_SIZE,
-               "actions": NPC_ACTIONS, "model_dir": NPC_DIR},
+               "actions": NPC_ACTIONS, "frames": DEFAULT_FRAMES, "model_dir": NPC_DIR},
     # boss: cell·display 를 **둘 다** 256 으로(2026-07-31, cowork `boss-size`) — minion 의 대칭.
     # cell 256 = 화질 축(2배 확대해도 안 뭉개짐) · display 256 = 크기 축(laryen.displaySize 메타로
     # 런타임이 발 피벗 2.0배 확대). 한쪽만 바꾸면 "같은 크기" 또는 "흐릿한 확대"가 된다.
     # 🛑 mac 쪽 sheet.py 와 반드시 같은 값을 유지할 것 — 한쪽만 고치면 그 OS 에서 재생성할 때
     #    128 로 조용히 되돌아가는 회귀가 난다.
     "boss":   {"directions": 8, "cell": BOSS_CELL_SIZE, "display": BOSS_DISPLAY_SIZE,
-               "actions": MOB_ACTIONS, "model_dir": "game-assets/characters/boss"},
+               "actions": MOB_ACTIONS, "frames": MONSTER_FRAMES,
+               "model_dir": "game-assets/characters/boss"},
     # minion: cell 64 만으로는 화면에서 작아지지 않는다(런타임이 컴포넌트 128 에 맞춰 확대) —
     # display 64 를 `.atlas` 의 laryen.displaySize 로 실어 런타임이 0.5배로 축소 렌더하게 한다.
     "minion": {"directions": 8, "cell": 64, "display": 64,
-               "actions": MOB_ACTIONS, "model_dir": "game-assets/characters/minion"},
+               "actions": MOB_ACTIONS, "frames": MONSTER_FRAMES,
+               "model_dir": "game-assets/characters/minion"},
 }
 ALL_KINDS = tuple(KIND_POLICY)
 ACTOR_KINDS = ALL_KINDS
@@ -1959,7 +1974,11 @@ def main():
         sys.exit(f"Unsupported character format: {char_ext or '(no extension)'} — {args.character}")
     if char_ext == ".blend":
         print("  ℹ️  .blend character — opened directly in Blender for rendering.")
-    else:
+    elif not args.build_only:
+        # 🛑 --build-only 는 기존 낱장을 다시 패킹만 하므로 Blender 를 아예 띄우지 않는다 —
+        #    모델·애니의 rig 규격은 결과에 영향을 주지 않으니 검사하지 않는다. 이 예외가 없으면
+        #    비인간형(Mixamo rig 아님) 자산(minion 등)은 *재패킹조차* 못 한다.
+        #    🛑 mac 쪽 sheet.py 와 동일하게 유지할 것(형제 파일 동기화).
         assert_mixamo_rig(args.character, "캐릭터(--character)")
 
     # ── 무기(선택) ──
@@ -2024,10 +2043,14 @@ def main():
         miss_act = [a for a in actions if a not in have]
         if miss_act:
             print(f"  ⚠️  missing animations (those actions render blank frames): {', '.join(miss_act)}")
-        for a in have:
-            assert_mixamo_rig(anim_file(a), f"애니메이션 '{a}'({os.path.basename(anim_file(a))})")
+        if not args.build_only:      # 위 --build-only 예외와 같은 이유(렌더 없음 → rig 무관)
+            for a in have:
+                assert_mixamo_rig(anim_file(a), f"애니메이션 '{a}'({os.path.basename(anim_file(a))})")
 
-    frames = {a: int(DEFAULT_FRAMES.get(a, 8)) for a in actions}
+    # 행동별 프레임 수 — kind 정책(KIND_POLICY["frames"]) 우선, 없는 행동만 DEFAULT_FRAMES 로 보충.
+    # 몬스터 계열(mob/boss/minion)은 MONSTER_FRAMES(idle8·walk10·attack10·death6)를 쓴다.
+    _kind_frames = policy.get("frames") or DEFAULT_FRAMES
+    frames = {a: int(_kind_frames.get(a, DEFAULT_FRAMES.get(a, 8))) for a in actions}
     if args.kind == "npc":
         frames["idle"] = NPC_IDLE_FRAMES  # npc idle 기본 24 셀(부드러운 루프). --idle N 으로 override 가능.
     for a in FRAME_OPTION_ACTIONS:
