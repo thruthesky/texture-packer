@@ -895,19 +895,26 @@ def _render_foot_mask(fname):
     🛑 정확한 발바닥 SSOT (두 팀 회고 종합): align_feet 의 세로 정렬 기준이 부정확하면 발이 뜨거나
     (검을 발로 오인) 땅속에 박힌다(정점 투영이 실제 발보다 위). 여기서 무기를 숨긴 캐릭터 raster 를
     남기면 그 alpha bbox 하단이 *화면에 실제 보이는 발바닥* 이다(투영 오차·검 오인 둘 다 없음).
-    저해상(64) + WORKBENCH 라 최종(EEVEE) 대비 렌더 비용이 매우 작다. 🛑 회귀 없음: 마스크는
+    WORKBENCH 라 최종(EEVEE) 대비 렌더 비용이 작다. 🛑 회귀 없음: 마스크는
     alpha(실루엣) 하단만 쓰므로 셰이딩 엔진(WORKBENCH/EEVEE)과 무관하게 발바닥 위치가 동일하다.
-    최종(검 포함) 렌더는 그대로 EEVEE 라 게임 화질도 안 바뀐다."""
+    최종(검 포함) 렌더는 그대로 EEVEE 라 게임 화질도 안 바뀐다.
+
+    🛑 해상도를 낮추지 않는다 — 마스크는 *프레임과 동일 해상도* 로 렌더해야 한다(2026-08-12).
+    align_feet.py 는 `round(mask_bbox_bottom / mask_h * frame_h)` 로 마스크 행을 프레임 픽셀로
+    환산하는데, 마스크가 작으면 그 환산의 양자화 오차가 그대로 세로 이동 오차가 된다. 과거
+    64 고정에서는 1 마스크 행 = 278/64 = 4.34 프레임 px 였고, Blender 의 안티에일리어싱이
+    발바닥 아래 행에 alpha 3/255(1.2% 불투명 — 눈에 안 보임)을 남기면 getbbox() 가 그것을
+    실루엣으로 세어 발 위치가 한 행(=4.34px) 어긋났다. 실측(outputs/female): idle_N 8프레임 중
+    5장이 -12px, 3장이 -7px 로 밀려 5px(128 셀에서 2.3px) 세로 진동이 생겼다 — 원본 렌더는
+    1px 이내로 안정적이었는데 *정렬 단계가* 떨림을 만든 것이다. 동일 해상도면 mask_h ==
+    frame_h 라 환산이 항등식이 되어 오차가 0 이고, 발이 정확히 foot_frac(0.85)에 놓인다."""
     r = scene.render
     hidden = []
     for o in _weapon_objs:
         if not o.hide_render:
             o.hide_render = True
             hidden.append(o)
-    ox, oy, opct, ofp, oeng = (r.resolution_x, r.resolution_y,
-                               r.resolution_percentage, r.filepath, r.engine)
-    r.resolution_x = r.resolution_y = 64
-    r.resolution_percentage = 100
+    ofp, oeng = r.filepath, r.engine
     r.engine = "BLENDER_WORKBENCH"   # 실루엣 alpha 만 필요 → 고속(색/조명 무관, film_transparent 유지)
     r.filepath = os.path.join(FOOT_MASK_DIR, fname)
     try:
@@ -915,8 +922,7 @@ def _render_foot_mask(fname):
     finally:
         for o in hidden:
             o.hide_render = False
-        (r.resolution_x, r.resolution_y,
-         r.resolution_percentage, r.filepath, r.engine) = ox, oy, opct, ofp, oeng
+        r.filepath, r.engine = ofp, oeng
 
 # 렌더 대상 행동 — ONLY_ACTIONS 가 주어지면 그 부분집합만(auto-fit 부분 재렌더), 아니면 전체.
 # 순서는 ACTIONS 를 유지(로그·진행률 일관). ONLY_ACTIONS 에 없는 행동은 이미 구워진 낱장을
