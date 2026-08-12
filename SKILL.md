@@ -25,7 +25,7 @@ Flutter Flame(`flame_texturepacker`) 게임을 위해 캐릭터·몬스터·NPC 
 | `scripts/verify_cells.py` | **cell 잘림(clip) 자동 검사** — 낱장 프레임 4 테두리 불투명 픽셀로 셀 밖 잘림 판정 + 행동별 권장 `--scale-<action>`(flutter 실행 불필요) |
 | `scripts/check_all_cells.sh` | **배치 cell 잘림 검사** — 여러 자산(`game-assets/characters/*.blend` 등)을 한 번에 렌더·검사해 자산별 잘림 프로파일 표로 요약(빠른 전체 스캔·최소 프레임, 정밀은 실제 프레임 수로 개별 실행) |
 | `scripts/sheet-win.py` | Windows 형제(빌드). sheet.py 와 동일 보조 스크립트 공유 |
-| `scripts/sheet-preview.py` | **4방향 preview**(macOS+Windows 공용). sheet.py 설정 재사용 + Windows Blender/Python 탐지 |
+| `scripts/sheet-preview.py` | **preview 시트**(macOS+Windows 공용). 기본 4방향, `--directions 1\|4\|8\|16` 으로 16방향까지. sheet.py 설정 재사용 + Windows Blender/Python 탐지 |
 | `scripts/combine_to_runtime_sheet.py` | 행동별 256 sheet → 런타임 128 단일 16×60 sheet 합성(legacy) |
 | `scripts/gen_all_sheets.sh` | 보유 PC/몬스터 모델 일괄 생성 헬퍼 |
 | `scripts/tools/*.jar` | libGDX TexturePacker(gdx 1.13.1) — 없으면 sheet.py 가 Maven 에서 자동 다운로드 캐시 |
