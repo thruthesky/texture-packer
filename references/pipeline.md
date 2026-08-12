@@ -197,10 +197,13 @@ NPC_ACTIONS     = ["idle"]                                       # npc 는 idle 
 스크립트(`_sheet_render.py`·`_sheet_build.py`·`align_feet.py`)를 `os.path.join(HERE, …)` 로
 공유한다 → 함께 이 스킬 scripts/ 에 있어야 정상. `_find_project_root` 로직·compress_image
 경로(`ROOT/scripts`)를 sheet.py 와 동일하게 유지한다. `sheet-preview.py` 는 **macOS+Windows 공용**
-4방향 preview 로, Blender/Python 탐지만 `sys.platform` 으로 분기하고(macOS=`/Applications/Blender.app`·
+preview 로, Blender/Python 탐지만 `sys.platform` 으로 분기하고(macOS=`/Applications/Blender.app`·
 Windows=레지스트리+표준 설치경로, build-step Python=`python3` vs `python`/`py`) 나머지 preview
 로직은 두 OS 에서 동일하다. 4방향 preview 허용 패치를 production `_sheet_render.py`/`_sheet_build.py`
 에서 복사 생성하며, 출력은 `outputs/<name>_preview/`(production assets/ 오염 없음).
+방향 수는 기본 4방향(E/S/W/N)이고 **`--directions 1|4|8|16`** 으로 바꾼다 — 16방향 사이 8개
+중간 방향(ESE·SSE 등)을 눈으로 확인하려면 `--directions 16`(행 4배·렌더 시간 4배). production
+프레임 수·128 cell 로 맞추는 `--full` 보다 `--directions` 가 우선한다.
 
 ## 9. cell 잘림 자동 검사 + auto-fit (verify_cells.py)
 

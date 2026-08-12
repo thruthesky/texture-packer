@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 r"""
-Laryen **4-direction PREVIEW** sprite sheet generator CLI — **macOS + Windows**.
+Laryen **PREVIEW** sprite sheet generator CLI (4-direction by default) — **macOS + Windows**.
 
 A lightweight preview variant of scripts/sheet.py (macOS) / sheet-win.py (Windows). Its purpose is
 to quickly *eyeball* a character/monster's facing, pose, and animation matching. It differs from the
 production sheet in three ways:
-  (1) Renders **4 directions only** (N/E/S/W cardinals) instead of production 16/8. row count 4 = 1/4 the height.
+  (1) Renders **4 directions** (E/S/W/N cardinals) by default instead of production 16/8. row count 4 = 1/4 the height.
+      Pass **--directions 16** (or 8 / 1) when 4 cardinals are not enough — e.g. to eyeball the 8
+      intermediate facings that only exist in a 16-direction set. Render time scales with the count.
   (2) Renders **3 frames per action only** (instead of production idle 8 / walk 12 etc.) — fixed 3 for every action.
   (3) Makes the **cell (image) bigger** (default **384px** vs. the production render cell — larger preview detail).
   -> 4 dir x 3 frame x 6 action = 18 col x 4 row. 384px cell -> 6912x1536 sheet (within 8192).
+  -> with --directions 16 the row count (and sheet height) is 4x that — watch the 8192 limit.
 
 NOTE: this is NOT production asset generation. New PC/monster *runtime* sprites MUST be made with
 sheet.py at 16 directions / 128 cell (CLAUDE.md SSOT). This script is a **human-eyeball preview only**,
@@ -43,8 +46,13 @@ Usage examples:
   ./scripts/sheet-preview.py game-assets/characters/boss/archon/archon.blend \
     --shading texture --actions idle,walk,attack --size 512
 
+  # All 16 production directions (16 rows) — the only way to eyeball the intermediate facings
+  ./scripts/sheet-preview.py game-assets/characters/mob/chassis/chassis.blend --directions 16
+
 Options are identical to the production sheet except for these defaults:
-  --directions  : fixed at 4 (not changeable — preview is 4-direction only).
+  --directions  : 4 (E/S/W/N cardinals). Accepts 1 / 4 / 8 / 16 — use 16 to preview the full
+                  production direction set (4x the rows and 4x the render time of the default).
+                  An explicit value wins over the count --full would pick for the kind.
   --size        : 384 (instead of the production render cell — a large preview).
   --idle/--walk/--run/--attack/--death : default to **3** each when omitted (instead of production 8~12).
   --animations  : accepts a variant NAME (e.g. `default` -> game-assets/animations/default) or a path,
@@ -273,7 +281,11 @@ def resolve_blend_shortcut(stem):
 
 
 # Preview defaults — the three axes that differ from the production sheet.
-PREVIEW_DIRECTIONS = 4            # (1) fixed at 4 directions (N/E/S/W cardinals)
+PREVIEW_DIRECTIONS = 4            # (1) 4 directions (E/S/W/N cardinals) unless --directions says otherwise
+# Direction counts the preview accepts. 1/8/16 are the production values (the generated helpers
+# inherit their handling from _sheet_render.py); 4 is the preview-only cardinal subset the patch in
+# _ensure_preview_helpers() adds. Anything else has no row-label mapping and would render garbage.
+ALLOWED_DIRECTIONS = (1, 4, 8, 16)
 PREVIEW_FRAMES_PER_ACTION = 3     # (2) fixed at 3 frames per action (when omitted)
 PREVIEW_CELL_DEFAULT = "384"      # (3) bigger cell (image) — 384 vs. the production render cell
 # hit(피격) removed 2026-07-20 to mirror the production sheet.py/sheet-win.py action list
@@ -306,9 +318,10 @@ _RENDER_DST = os.path.join(HERE, "_sheet_preview_render.py")
 _BUILD_DST  = os.path.join(HERE, "_sheet_preview_build.py")
 
 EXAMPLES = r"""
-4-direction preview — quick check (NOT production · human eyeballing):
+Preview sheet — quick check (NOT production · human eyeballing):
   NOTE: new runtime sprites use sheet.py at 16 dir / 128 cell. This script is *preview only*.
-  4 dir(N/E/S/W) x 3 frame x 6 action = 18 col x 4 row. Default 384px -> 6912x1536.
+  4 dir(E/S/W/N) x 3 frame x 6 action = 18 col x 4 row. Default 384px -> 6912x1536.
+  --directions 16 (or 8 / 1) changes the row count — 16 rows at 384px = 6144 tall, 4x the render time.
   Output -> outputs/<name>_preview/<name>.png (does NOT pollute production assets/)
 
   # Shortest form — model path only. name + animations are read from the path.
@@ -324,6 +337,13 @@ EXAMPLES = r"""
   # Bigger cell (512) — with 18 cols that's 9216 > 8192, so reduce actions via --actions or keep 384
   ./scripts/sheet-preview.py game-assets/characters/boss/archon/archon.blend \
     --shading texture --actions idle,walk,attack --size 512
+
+  # 16 directions — every production facing, incl. the 8 intermediates the 4-cardinal default omits
+  ./scripts/sheet-preview.py game-assets/characters/mob/chassis/chassis.blend --directions 16
+
+  # 16 directions, one action only — fastest way to check a single animation's facings
+  ./scripts/sheet-preview.py game-assets/characters/mob/chassis/chassis.blend \
+    --directions 16 --only-attack
 """
 
 
@@ -383,16 +403,16 @@ def _ensure_preview_helpers():
     # -- build helper --------------------------------------------------
     with open(_BUILD_SRC, encoding="utf-8") as f:
         build_src = f.read()
+    # Row labels for any preview direction count. Every count is the 16-direction set sampled every
+    # 16//N-th entry (16 -> all · 8 -> [::2] · 4 -> [E, S, W, N]), matching the render helper's
+    # DIR_LABELS so row i holds the frames rendered for that same label. _NDIR == 1 is spelled out
+    # because it is the npc front-only case, whose single label is "S" (not _DIR16[0] = "E").
     build_src = _require_replaced(
-        build_src, "ROWS 4-direction branch", [
+        build_src, "ROWS N-direction branch", [
             ("ROWS    = _DIR16 if _NDIR == 16 else _DIR16[::2]",
-             "ROWS    = (_DIR16 if _NDIR == 16\n"
-             "           else _DIR16[::2] if _NDIR == 8\n"
-             "           else _DIR16[::4])   # 4-direction preview = [E, S, W, N]"),
+             'ROWS    = ["S"] if _NDIR == 1 else _DIR16[::16 // _NDIR]'),
             ("ROWS = _DIR16 if _NDIR == 16 else _DIR16[::2]",
-             "ROWS = (_DIR16 if _NDIR == 16\n"
-             "        else _DIR16[::2] if _NDIR == 8\n"
-             "        else _DIR16[::4])   # 4-direction preview = [E, S, W, N]"),
+             'ROWS = ["S"] if _NDIR == 1 else _DIR16[::16 // _NDIR]'),
         ])
     _write_if_changed(_BUILD_DST, _PREVIEW_BANNER + build_src)
 
@@ -675,7 +695,8 @@ def _report_packed(atlas):
     return size_line, total, rotated
 
 
-def _pack_preview_atlas(name, frames_dir, outputs, sheet_out_dir, action_scales, cell, render_res, args):
+def _pack_preview_atlas(name, frames_dir, outputs, sheet_out_dir, action_scales, cell, render_res,
+                        directions, args):
     """Pack the already-rendered preview frames into <name>.atlas + <name>.png (TexturePacker),
     reusing the production packer functions. This is a preview/test path: NO actor-rotate validation
     guard and NO pubspec/assets change — output stays in the preview work folder. Rotated frames
@@ -738,7 +759,7 @@ def _pack_preview_atlas(name, frames_dir, outputs, sheet_out_dir, action_scales,
     size_line, nreg, nrot = _report_packed(atlas)
     tb = sum(os.path.getsize(p) for p in pages)
     print(f"  OK packed preview atlas -> {atlas}")
-    print(f"     coverage {'16-dir full (sheet-win-like)' if args.full else '4-dir preview'} · "
+    print(f"     coverage {f'{directions}-dir full (sheet-win-like)' if args.full else f'{directions}-dir preview'} · "
           f"page(s) {len(pages)} · size {size_line} · regions {nreg} · "
           f"rotated {nrot} ({'rotation ON' if args.rotation else 'rotation OFF'})")
     for p in pages:
@@ -750,7 +771,8 @@ def _pack_preview_atlas(name, frames_dir, outputs, sheet_out_dir, action_scales,
 
 def main():
     ap = argparse.ArgumentParser(
-        description="FBX/GLB -> **4-direction 3-frame PREVIEW** sprite sheet (big 384 cell · human-check only · macOS+Windows)",
+        description="FBX/GLB -> **3-frame PREVIEW** sprite sheet, 4 directions by default "
+                    "(--directions 1/4/8/16) — big 384 cell · human-check only · macOS+Windows",
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         add_help=True)
@@ -782,6 +804,14 @@ def main():
                     help="Output sprite/file name (preview only — no pc/npc/mob category). "
                          "Preview output is outputs/<name>_preview/<name>.png. Inferred from the model "
                          "path when omitted. (--kind is a deprecated alias kept for backward compatibility.)")
+    ap.add_argument("--directions", type=int, default=None, choices=ALLOWED_DIRECTIONS,
+                    metavar="{1,4,8,16}",
+                    help=f"Direction count = sheet rows (default {PREVIEW_DIRECTIONS} preview cardinals E/S/W/N). "
+                         "Pass 16 to preview the full production direction set (16 rows — the only way to "
+                         "eyeball the 8 intermediate facings), 8 for the boss/minion set, 1 for npc front-only. "
+                         "Render time and sheet height scale with the count, so keep an eye on the 8192 limit "
+                         "(with the default 384 cell, 16 directions = 6144px tall). Wins over the count --full "
+                         "would pick for the kind.")
     ap.add_argument("--cell-size", "--size", dest="cell_size", default=None,
                     help=f"Cell pixel size (default {PREVIEW_CELL_DEFAULT} preview · 128 with --full). Sum(frames)*cell <= 8192")
     ap.add_argument("--k", type=float, default=128.0,
@@ -959,10 +989,22 @@ def main():
         cell = parse_size(args.cell_size)
     else:
         cell = 128 if args.full else int(PREVIEW_CELL_DEFAULT)
-    # --full exists to mirror what production will actually bake, so it follows the kind's real
-    # direction count when the path told us the kind (boss/minion are 8-direction by spec, npc 1).
-    # The plain preview stays at 4 regardless — it is an eyeball tool, not an asset.
-    if args.full:
+    # Direction count. An explicit --directions always wins — it is the user saying "show me these
+    # rows", including over --full's kind lookup (e.g. `--full --directions 16` on a boss, to compare
+    # its 8-direction production set against the full one). Otherwise --full mirrors what production
+    # will actually bake, following the kind's real count when the path told us the kind (boss/minion
+    # are 8-direction by spec, npc 1); the plain preview stays at the 4 cardinals.
+    if args.directions is not None:
+        directions = args.directions
+        _kind_full = KIND_FULL_DIRECTIONS.get(inferred_kind, 16)
+        if args.full and directions != _kind_full:
+            print(f"  info: --directions {directions} overrides --full's production count "
+                  f"({_kind_full} for kind '{inferred_kind or '?'}')")
+        elif directions != PREVIEW_DIRECTIONS:
+            print(f"  info: --directions {directions} (preview default is {PREVIEW_DIRECTIONS} cardinals) "
+                  f"-> {directions} row{'' if directions == 1 else 's'} · "
+                  f"{directions / PREVIEW_DIRECTIONS:g}x the default render time")
+    elif args.full:
         directions = KIND_FULL_DIRECTIONS.get(inferred_kind, 16)
         if inferred_kind in KIND_FULL_DIRECTIONS:
             print(f"  info: --full uses {directions} directions for kind '{inferred_kind}' "
@@ -1179,7 +1221,9 @@ def main():
     print("=" * 64)
     print(f"  platform   : {'Windows' if IS_WINDOWS else ('macOS' if IS_MACOS else sys.platform)}")
     _dirdesc = (f"{directions} directions (full · sheet-win-like)" if args.full
-                else "4 cardinals (E/S/W/N)")
+                else "4 cardinals (E/S/W/N)" if directions == 4
+                else "1 direction (S · front only)" if directions == 1
+                else f"{directions} directions")
     print(f"  PREVIEW mode — {_dirdesc} · {cell}px cell"
           + ("   [--pack: TexturePacker atlas]" if args.pack else "   [grid preview]"))
     if args.pack:
@@ -1249,7 +1293,7 @@ def main():
             pass_frames = directions * sum(frames.get(a, PREVIEW_FRAMES_PER_ACTION) for a in pass_acts)
             tag = (f"  (pass {pi + 1}/{len(render_passes)} · {os.path.basename(pchar)})" if multipass else "")
             fittag = f"  [auto-fit {_fit}/{_max_fit}: {', '.join(pass_acts)}]" if _fit else ""
-            _dirtxt = "16-dir" if directions == 16 else "4-dir"
+            _dirtxt = f"{directions}-dir"
             print(f"\n[1] Blender rendering ({_dirtxt} preview){tag}{fittag} ... "
                   f"({pass_frames} frames = {directions} dir × "
                   f"{sum(frames.get(a, PREVIEW_FRAMES_PER_ACTION) for a in pass_acts)} frames)")
@@ -1340,7 +1384,7 @@ def main():
 
     if not args.render_only and args.pack:
         _pack_preview_atlas(name, frames_dir, outputs, sheet_out_dir,
-                            action_scales, cell, render_res, args)
+                            action_scales, cell, render_res, directions, args)
     elif not args.render_only:
         print("\n[2/2] Compositing preview sprite sheet ...")
         uv = shutil.which("uv")
