@@ -78,11 +78,20 @@ python3 .claude/skills/texture-packer/scripts/sheet.py ./game-assets/characters/
   구 폴더명 `blend/` 도 하위호환으로 받는다(2026-07-28 `characters/` 로 개명).
   name 은 **파일명이 아니라 폴더명**(폴더가 자산의 단위이고 애니도 그 폴더에 함께 놓인다).
   구조를 못 알아보면 조용히 추측하지 않고 경고 후 기존 흐름(대화형·명시 옵션)으로 간다.
-- **애니메이션 3단 우선순위**
-  1. **모델과 같은 폴더**의 `idle/walk/attack/death.fbx` — 필요한 행동이 *전부* 있을 때만
-     (일부만 있으면 rig 가 섞여 팔 꺾임 회귀가 나므로 다음 순위로 넘어간다)
-  2. `game-assets/animations/<name>/` — 캐릭터 전용 세트(현재 49개 존재)
+- **애니메이션 3단 우선순위** 🛑 **2026-08-12 부터 캐릭터 전용 애니는 ①에 있다**(아래 참조)
+  1. **모델과 같은 폴더**의 `idle/walk/attack/death.fbx` — **현행 표준**. 일부만 있어도 되고,
+     부족한 행동은 아래 순위에서 자동으로 채워 한 폴더로 합성한다(`find_model_folder_anims`).
+     프로젝트의 캐릭터·애니가 모두 Mixamo rig 로 통일돼 있어 부분 교체가 안전하다.
+  2. `game-assets/animations/<name>/` — **거의 비어 있다**(하위호환 경로). 전용 세트 45종은
+     2026-08-12 에 ①로 옮겨졌고, 지금 남은 것은 **공용 모션 라이브러리 15종**
+     (`default`·`slash`·`punch`·`sword`·`stab`·`bite` 등 — 특정 캐릭터 것이 아니다).
   3. `--animations` 값 → 4. `default`
+- 🛑 **`--animations default` 를 함부로 명시하지 말 것** — ①의 자동 선택을 *덮어써서* 그 캐릭터
+  전용 동작을 범용 사람 동작으로 갈아끼운다. **에러가 나지 않아** 발견이 가장 어렵다(실측:
+  crusher 를 `--animations default` 로 구웠더니 자세가 통째로 달라졌다, 2026-08-12).
+  **평소에는 `--animations` 를 아예 주지 않는 것이 정답**이고, 예외는 비인간형의
+  `--animations built-in`(내장 애니 강제 — 빠뜨리면 사람 걸음이 씌워진다) 뿐이다.
+  전체 재굽기 명령은 `tools/build_regen_manifest.py` 가 이 규칙을 자동으로 지켜 생성한다.
 - **`--auto` 자동** — 경로만 준 단축 호출일 때만 켜진다. **개별 옵션을 주면 그 값이 이긴다.**
 - 기존 방식(`--character` + `--kind` + `--name` 명시)은 **그대로 동작**한다 — 추론이 개입하지 않는다.
 
