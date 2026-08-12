@@ -368,6 +368,16 @@ RAM 을 줄이는 길은 셀 크기·프레임 수·자산 종류를 줄이는 �
 - 🛑 **`--build-only` 는 Mixamo rig 검사를 하지 않는다** — Blender 를 아예 띄우지 않아 모델·애니의
   rig 규격이 결과에 영향을 주지 않기 때문이다. 이 예외가 없으면 비인간형 자산(minion 등)은
   *재패킹조차* 못 한다(실측 `mini_red`). 렌더 경로(`--build-only` 없음)에서는 종전대로 검사한다.
+- 🛑 **재굽기 뒤에는 반드시 `python3 tools/check_atlas_health.py` 를 돌린다 (2026-08-12 실측 사고)**
+  — Blender 는 텍스처를 못 찾아도 **에러 없이 마젠타(분홍)로 렌더**한다. 굽기 로그는 "완료"라고
+  나오고 프레임 수·방향·메타도 전부 정상이라 **픽셀을 보지 않으면 절대 못 잡는다.** 실제로 다른
+  팀이 65종을 구워 커밋했는데 **ramon 73% · spider_cannon 86% · skitter 15%** 가 분홍색이었다.
+  이 도구는 마젠타 비율·빈 이미지·프레임 규격·index 연속성·`.atlas` size ↔ PNG 세대 정합을 한 번에
+  본다(문제 0이면 exit 0 이라 그대로 게이트로 쓸 수 있다). 손상되면 `git checkout` 으로 되돌린다.
+- 🛑 **굽기 전에 `git lfs pull`** — 3D 모델(`.blend`)은 Git LFS 라 clone 직후엔 134바이트 포인터다.
+  그 상태로 구우면 그 종은 전부 `File format is not supported` 로 실패한다(같은 사고에서
+  **23종 실패 중 20종**이 이것이었고 107분을 버렸다). `build_regen_manifest.py` 가 이제 굽기 전에
+  검사해 매니페스트 자체를 만들지 않고 `git lfs pull` 을 안내한다.
 - 🛑 **자산을 다시 구웠으면 R2 발행까지 해야 사용자에게 간다 (2026-08-12 cowork 감사에서 적발)**
   — 몬스터·PC 상당수가 **앱 번들이 아니라 R2 lazy download** 다(`tools/assets/remote_assets.yaml`
   이 SSOT — 실측 몬스터 65종 중 **36종**이 `mob-dungeon`·`mob-seoul-districts` 팩). `assets/` 만
