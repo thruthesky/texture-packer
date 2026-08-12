@@ -195,7 +195,7 @@ flutter 실행 없이 **생성 이미지 검사만으로** 잡아 자동 조정�
 | `--vivid 1-9` | 9 | 밝기(exposure)+대비(gamma) 부스트. 1=무보정, 9=최대(기본) |
 | `--shading {eevee\|texture}` | eevee | eevee=PBR 3점 조명, texture=WORKBENCH TEXTURE(금속/갑옷용) |
 | `--render-res N` | max(256,cell) | frame 렌더 해상도(→ 128 로 자동 축소, `--scale-frames`) |
-| `--idle/--walk/--attack/--death/--run N` | **kind 마다 다르다** — pc/npc `8/12/16/8/12`(`DEFAULT_FRAMES`) · **mob·boss·minion `8/10/10/6/10`**(`MONSTER_FRAMES`, 2026-08-12) | 행동별 프레임 수. 🛑 **`--hit` 은 없다** — hit 는 2026-07-20 규격에서 제거됐다(`FRAME_OPTION_ACTIONS`). 몬스터가 pc 보다 적은 이유·재생 속도 보존은 아래 §몬스터 프레임 규격 참조 |
+| `--idle/--walk/--attack/--death/--run N` | **kind 마다 다르다** — pc/npc `8/12/16/8/12`(`DEFAULT_FRAMES`) · **mob·boss·minion `8/12/10/6/12`**(`MONSTER_FRAMES`, 2026-08-12) | 행동별 프레임 수. 🛑 **`--hit` 은 없다** — hit 는 2026-07-20 규격에서 제거됐다(`FRAME_OPTION_ACTIONS`). 몬스터가 pc 보다 적은 이유·재생 속도 보존은 아래 §몬스터 프레임 규격 참조 |
 | `--look/--talk/--wave N` | 8 | npc 전용 행동 프레임 수 |
 | `--scale-<action>` | **미지정 시 대화형 질문**(기본 제안 **전부 1.0** — `SCALE_PROMPT_DEFAULTS`; 비대화형은 그 값 적용) | 행동별 생성 scale. `<1` 이면 모델을 작게 구워(무기/모션 128 셀 밖 잘림 방지) `.atlas` 의 `laryen.actionScale.<action>` 메타에 기록 → **게임 런타임이 1/scale 로 원래 크기 복원**([references/pipeline.md](references/pipeline.md) §6). 🛑 과거의 **walk 0.9 · attack 0.8 일괄 축소 프리셋은 폐기**됐다(2026-07-09 셀 확대 전환) — 셀 확대는 atlas RAM(iOS OOM)·page 폭(8192 한계)을 키우므로 *잘리지 않는 행동까지 무조건 키우지 않는다*. 잘리는 행동만 `--auto-fit-scale` 이 검출해 낮춘다. 🛑 `--auto-fit-scale` 사용 시 이 값은 **무시** 됨(1.0 에서 자동 조정) |
 | `--weapon / --weapon-bone …` | — | 무기 손 본 장착 |
