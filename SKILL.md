@@ -359,6 +359,25 @@ RAM 을 줄이는 길은 셀 크기·프레임 수·자산 종류를 줄이는 �
 - 🛑 **`--build-only` 는 Mixamo rig 검사를 하지 않는다** — Blender 를 아예 띄우지 않아 모델·애니의
   rig 규격이 결과에 영향을 주지 않기 때문이다. 이 예외가 없으면 비인간형 자산(minion 등)은
   *재패킹조차* 못 한다(실측 `mini_red`). 렌더 경로(`--build-only` 없음)에서는 종전대로 검사한다.
+- 🛑 **자산을 다시 구웠으면 R2 발행까지 해야 사용자에게 간다 (2026-08-12 cowork 감사에서 적발)**
+  — 몬스터·PC 상당수가 **앱 번들이 아니라 R2 lazy download** 다(`tools/assets/remote_assets.yaml`
+  이 SSOT — 실측 몬스터 65종 중 **36종**이 `mob-dungeon`·`mob-seoul-districts` 팩). `assets/` 만
+  다시 굽고 끝내면 **로컬만 새것이고 사용자 기기는 계속 구 자산을 받는다**(실측: 프레임 감축 직후
+  R2 는 여전히 구 팩 `dba13c81`/25.29MiB 를 서빙 중이었다).
+  - 확인: `python3 tools/assets/publish_r2.py --env staging --dry-run` 으로 로컬 `contentHash` 를
+    구하고, `curl -s https://assets.laryen.com/catalog/{staging,production}.json` 의 해시와 비교한다.
+    **다르면 아직 안 나간 것**이다.
+  - 발행: `python3 tools/assets/publish_r2.py --env staging` (AI 자율 — production 무영향).
+  - 🛑 **production 발행은 클라 릴리스 *뒤* 에** — R2 팩은 앱 버전과 무관하게 내려가므로, *구 클라 +
+    새 자산* 조합이 생기면 그 자산만 애니가 빨라진다(구 클라는 고정 stepTime, 새 자산은 프레임이
+    적다 → walk 1.2배·attack 1.6배 "종종걸음"). 자산 규격을 바꾸는 재굽기에서는 **새 클라가 스토어에
+    올라간 뒤** production 을 발행한다. `minClientVersion` 을 올려 막는 방법은 **쓰지 말 것** — 구 클라가
+    catalog 를 통째로 무시해 *신규 설치 사용자에게 그 몬스터가 아예 안 보인다*(더 나쁘다).
+- 🛑 **`outputs/<name>/frames` 의 낱장은 세대를 신뢰하지 말 것** — 재렌더 원본이 남아 있어도 그것이
+  현재 출고본과 같은 세대라는 보장이 없다(실측: 같은 crusher 인데 page 3792 vs 4147 로 불일치, 그리고
+  프레임 감축 후에도 `outputs/*/_sheet_config.json` 109개가 `"attack": 16` 구 규격으로 남아 있다).
+  거기서 `--build-only` 를 돌리면 **조용히 구 규격으로 원복된다.** 현재 픽셀을 보존하며 재작업하려면
+  낱장을 **출고 `.atlas`+`.png` 에서 복원**해 쓴다.
 - **캐릭터·애니 모델은 Mixamo rig**(본 이름 `mixamorig:`). PC 는 부위별 overlay 합성 없이
   세트 단위 통짜 sheet. 몬스터는 장비 분리 없이 전체 모델 렌더.
 - **RAM 은 W×H×4 로 고정** — `--color-compression` 은 디스크/번들 용량만 줄인다(OOM 무관).
