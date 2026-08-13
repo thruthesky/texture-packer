@@ -1054,7 +1054,8 @@ def align_frames_feet(frames_dir, foot_frac=0.85, only_actions=None):
         print(f"  ✓ 낱장 발 정렬(0.85) — {o.stdout.strip()}")
 
 
-def apply_ground_shadow(frames_dir, lift, foot_frac=0.85, alpha=90, width_ratio=0.44):
+def apply_ground_shadow(frames_dir, lift, foot_frac=0.85, alpha=90, width_ratio=0.44,
+                        body_scale=1.0):
     """비행체 낱장에 **접지 그림자 + 본체 띄우기** 를 합성한다(ground_shadow.py 위임).
 
     🛑 **왜 자산에 굽나** — 비행체는 다리가 없어 align_feet(불투명 bbox 하단을 0.85 로 정렬)이
@@ -1074,7 +1075,8 @@ def apply_ground_shadow(frames_dir, lift, foot_frac=0.85, alpha=90, width_ratio=
         return
     uv = shutil.which("uv")
     base = [script, frames_dir, "--lift", str(lift), "--foot-frac", str(foot_frac),
-            "--alpha", str(alpha), "--width-ratio", str(width_ratio)]
+            "--alpha", str(alpha), "--width-ratio", str(width_ratio),
+            "--body-scale", str(body_scale)]
     cmd = ([uv, "run", "--with", "pillow", "python3"] + base
            if uv else ["python3"] + base)
     o = subprocess.run(cmd, capture_output=True, text=True)
@@ -1083,7 +1085,7 @@ def apply_ground_shadow(frames_dir, lift, foot_frac=0.85, alpha=90, width_ratio=
               + (o.stderr or o.stdout or "")[-400:])
     else:
         _tail = [l for l in (o.stdout or "").strip().splitlines() if l.strip()][-1:]
-        print(f"  ✓ 접지 그림자 + 부양 {lift}px — {_tail[0] if _tail else 'ok'}")
+        print(f"  ✓ 접지 그림자 + 부양 {lift}px · 본체 ×{body_scale:g} — {_tail[0] if _tail else 'ok'}")
 
 
 def fix_offset_y(atlas_path):
@@ -1701,6 +1703,13 @@ def main():
     ap.add_argument("--ground-shadow-width-ratio", type=float, default=0.44,
                     dest="ground_shadow_width_ratio",
                     help="그림자 가로 반지름 = 프레임 실루엣 폭 × 이 값(기본 0.44)")
+    # 🛑 이 종만 작게 그리는 *두 번째* 수단이자, lift 여유를 만드는 수단이다.
+    #    --display-size 와 달리 **프레임 안에서** 본체를 줄이므로 위쪽 공간이 생겨 더 띄울 수
+    #    있다. 비행체에서 "작게 + 더 높이" 를 동시에 만족시키는 유일한 조합이다
+    #    (displaySize 만 쓰면 본체-그림자 간격까지 비례 축소돼 부양감이 같이 줄어든다).
+    ap.add_argument("--ground-shadow-body-scale", type=float, default=1.0,
+                    dest="ground_shadow_body_scale",
+                    help="접지 그림자 적용 시 본체 크기 배율(발 위치 유지). 예 0.7 = 30%% 작게")
     for a in FRAME_OPTION_ACTIONS:
         ap.add_argument(f"--{a}", type=int, help=f"{a} 프레임(셀) 수")
     for a in FRAME_OPTION_ACTIONS:
@@ -2316,7 +2325,8 @@ def main():
             print(f"\n[1-b] 비행체 접지 그림자 합성 중 … (lift {args.ground_shadow_lift}px)")
             apply_ground_shadow(frames_dir, args.ground_shadow_lift,
                                 alpha=args.ground_shadow_alpha,
-                                width_ratio=args.ground_shadow_width_ratio)
+                                width_ratio=args.ground_shadow_width_ratio,
+                                body_scale=args.ground_shadow_body_scale)
 
     if args.render_only:
         print("\n(--render-only) 낱장:", frames_dir, "\n완료.")
