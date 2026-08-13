@@ -1054,6 +1054,38 @@ def align_frames_feet(frames_dir, foot_frac=0.85, only_actions=None):
         print(f"  ✓ 낱장 발 정렬(0.85) — {o.stdout.strip()}")
 
 
+def apply_ground_shadow(frames_dir, lift, foot_frac=0.85, alpha=90, width_ratio=0.44):
+    """비행체 낱장에 **접지 그림자 + 본체 띄우기** 를 합성한다(ground_shadow.py 위임).
+
+    🛑 **왜 자산에 굽나** — 비행체는 다리가 없어 align_feet(불투명 bbox 하단을 0.85 로 정렬)이
+    곧 "고도 0 강제" 가 된다. 기체를 3D 에서 아무리 띄워도 낱장에서는 지면에 붙는다. 그래서
+    정렬이 끝난 뒤 본체만 lift 만큼 올리고 원래 발 위치에 타원 그림자를 깔아, 최종 bbox 하단이
+    *그림자* 가 되게 한다 — 런타임 앵커가 그림자를 지면에 놓으므로 본체가 그 위에 뜬다.
+    클라 코드는 한 줄도 관여하지 않는다(런타임 hover 와 併用하면 그림자까지 떠올라 역효과).
+
+    🛑 **align_feet 뒤 · TexturePacker 앞** 에서만 유효하다. 앞에서 돌리면 정렬이 그림자를
+    "발" 로 잡아 본체를 도로 내린다. 호출 지점이 그 순서를 보장한다.
+
+    🛑 **idempotent 가 아니다** — 이미 적용된 낱장에 또 걸면 본체가 두 번 뜨고 그림자가 두 겹이
+    된다. 그래서 --build-only(기존 낱장 재packing) 경로에서는 호출하지 않는다."""
+    script = os.path.join(HERE, "ground_shadow.py")
+    if not os.path.exists(script):
+        print(f"  ⚠️ ground_shadow.py 없음 — 접지 그림자 생략: {script}")
+        return
+    uv = shutil.which("uv")
+    base = [script, frames_dir, "--lift", str(lift), "--foot-frac", str(foot_frac),
+            "--alpha", str(alpha), "--width-ratio", str(width_ratio)]
+    cmd = ([uv, "run", "--with", "pillow", "python3"] + base
+           if uv else ["python3"] + base)
+    o = subprocess.run(cmd, capture_output=True, text=True)
+    if o.returncode != 0:
+        print("  ⚠️ 접지 그림자 합성 실패 — 그림자 없이 진행(비행체가 지면에 붙어 보인다):\n     "
+              + (o.stderr or o.stdout or "")[-400:])
+    else:
+        _tail = [l for l in (o.stdout or "").strip().splitlines() if l.strip()][-1:]
+        print(f"  ✓ 접지 그림자 + 부양 {lift}px — {_tail[0] if _tail else 'ok'}")
+
+
 def fix_offset_y(atlas_path):
     """Y trim(stripWhitespaceY) 시 libGDX 가 쓴 bottom-left offsetY 를 flame(top-left) 기준으로 보정.
 
@@ -1643,6 +1675,32 @@ def main():
     ap.add_argument("--directions", type=int, default=None, choices=[8, 16],
                     help="방향 수(=row 수). pc/mob 기본 16 · npc 1(고정) · boss/minion 8(고정). "
                          "16의 짝수 row(=FLARE16 짝수 라벨)가 8방향과 일치한다")
+    # ── 종족 화면 크기(cell 과 별개의 *크기 축*) ──────────────────────────────────
+    # 🛑 KIND_POLICY["display"] 를 **그 종 하나만** 덮어쓴다. kind 정책을 고치면 그 kind 전체가
+    #    커지거나 작아지므로(mob 65종 전부!), "이 몬스터만 작게" 는 반드시 이 옵션으로 한다.
+    #    `.atlas` 헤더 `laryen.displaySize` 로 실려 런타임이 발 피벗 기준으로 배율 렌더한다
+    #    (actor_animation_set.dart parseDisplaySizeScale = displaySize/128).
+    #    화질 축(cell)은 그대로라 **축소해도 원본 픽셀이 유지**된다(재렌더 불필요).
+    ap.add_argument("--display-size", type=int, default=None, dest="display_size",
+                    help="이 종의 화면 표시 크기 px(cell 과 별개). 미지정=kind 정책 기본"
+                         "(pc/mob/npc 128 · minion 64 · boss 256). 예: 90 = 128 대비 70%%")
+    # ── 비행체 접지 그림자(ground_shadow.py) ──────────────────────────────────────
+    # 🛑 **이 옵션이 없으면 재굽기가 그림자를 지운다.** 그림자는 자산에 구워지는데(런타임 코드
+    #    없음), 낱장 재렌더는 그림자 없는 프레임을 새로 만들기 때문이다. 실제로 2026-08-12
+    #    몬스터 65종 일괄 재굽기가 라세론(구 drone)의 그림자를 통째로 날렸다 — 그때는 이 훅이
+    #    없어 사람이 매번 손으로 ground_shadow.py 를 돌려야 했다.
+    # 🛑 align_feet **뒤**, TexturePacker **앞** 에서만 유효하다(그 순서를 이 스크립트가 보장).
+    # 🛑 align_feet 과 마찬가지로 **idempotent 가 아니다** — 이미 적용된 낱장에 또 걸면 본체가
+    #    두 번 떠오르고 그림자가 두 겹이 된다. 그래서 --build-only(기존 낱장 재packing)에서는
+    #    적용하지 않는다(이미 적용된 상태로 간주).
+    ap.add_argument("--ground-shadow-lift", type=float, default=0.0, dest="ground_shadow_lift",
+                    help="비행체 부양 px(화면 기준). >0 이면 align_feet 뒤에 접지 타원 그림자를 깔고 "
+                         "본체를 이만큼 띄운다. 0=미적용(지상 액터 기본)")
+    ap.add_argument("--ground-shadow-alpha", type=int, default=90, dest="ground_shadow_alpha",
+                    help="접지 그림자 진하기 0~255(기본 90). 낮을수록 옅다")
+    ap.add_argument("--ground-shadow-width-ratio", type=float, default=0.44,
+                    dest="ground_shadow_width_ratio",
+                    help="그림자 가로 반지름 = 프레임 실루엣 폭 × 이 값(기본 0.44)")
     for a in FRAME_OPTION_ACTIONS:
         ap.add_argument(f"--{a}", type=int, help=f"{a} 프레임(셀) 수")
     for a in FRAME_OPTION_ACTIONS:
@@ -2247,6 +2305,19 @@ def main():
             # 다음 pass 는 scale 이 바뀐 행동만 재렌더(부분 재렌더). ACTIONS 순서를 유지한다.
             _render_only = [a for a in actions if a in set(_next_only)]
 
+        # ── 비행체 접지 그림자 — auto-fit 루프를 **완전히 빠져나온 뒤 딱 1회** ────────────
+        # 🛑 루프 *안* 에서 부르면 안 된다. auto-fit 은 잘린 행동만 부분 재렌더하며 pass 마다
+        #    align 을 다시 부르는데, ground_shadow.py 는 폴더 전체를 처리하고 idempotent 가
+        #    아니라서(본체를 매번 또 올리고 그림자를 또 깐다) pass 수만큼 기체가 떠오르고
+        #    그림자가 겹친다. 정렬이 최종 확정된 이 지점이 유일하게 안전한 자리다.
+        # 🛑 --build-only 는 이 블록(렌더 루프) 자체를 타지 않으므로 자동으로 제외된다 —
+        #    기존 낱장에는 이미 그림자가 들어 있어, 다시 걸면 이중이 된다.
+        if args.ground_shadow_lift and args.ground_shadow_lift > 0:
+            print(f"\n[1-b] 비행체 접지 그림자 합성 중 … (lift {args.ground_shadow_lift}px)")
+            apply_ground_shadow(frames_dir, args.ground_shadow_lift,
+                                alpha=args.ground_shadow_alpha,
+                                width_ratio=args.ground_shadow_width_ratio)
+
     if args.render_only:
         print("\n(--render-only) 낱장:", frames_dir, "\n완료.")
         return
@@ -2318,7 +2389,9 @@ def main():
         #   · displaySize : minion(64)처럼 화면에서 작게 그릴 종족의 크기 축(cell 과 별개).
         inject_action_scales(atlas, action_scales,
                              directions=directions,
-                             display_size=KIND_POLICY[args.kind]["display"])
+                             display_size=(args.display_size
+                                           if args.display_size is not None
+                                           else KIND_POLICY[args.kind]["display"]))
         if args.color_compression:
             print(f"  [3] 페이지 PNG 압축 중 … (q256 · in-place)")
             for p, before, after in compress_pages(pages, colors=256):

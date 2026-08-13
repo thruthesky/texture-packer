@@ -68,12 +68,48 @@ def parse_args(argv=None):
                          "띄우면 공중에서 죽는다")
     ap.add_argument("--shrink-with-lift", type=float, default=0.0,
                     help=">0 이면 lift 가 클수록 그림자를 이 비율만큼 작고 옅게(고도 표현). 기본 0=고정")
+    # 🛑 본체 축소는 **lift 여유를 만드는 수단이기도 하다** — 셀 상단 여유가 곧 lift 한도라,
+    #    본체를 줄이지 않고 lift 만 키우면 기수가 셀 밖으로 잘린다(위 상단 여유 경고).
+    ap.add_argument("--body-scale", type=float, default=1.0,
+                    help="본체 크기 배율(발 위치 유지). 예 0.7 = 30%% 작게. 기본 1.0=원본. "
+                         "축소하면 상단 여유가 늘어 --lift 를 더 크게 줄 수 있다")
     return ap.parse_args(argv)
 
 
 def action_of(filename):
     """`idle_E_03.png` → `idle`. 파일명 규약은 `{action}_{DIR}_{idx}.png`."""
     return filename.split("_", 1)[0]
+
+
+def scale_body(im, scale, foot_y):
+    """본체만 `scale` 배로 축소/확대하되 **발(불투명 bbox 하단)을 `foot_y` 에 유지**한다.
+
+    🛑 왜 여기서 크기를 바꾸나 — 종의 화면 크기는 원래 `.atlas` 헤더 `laryen.displaySize` 로
+    줄이는 것이 정석이다(원본 픽셀 보존). 그런데 **비행체는 그 방법만으로는 부양감이 같이
+    줄어든다**: displaySize 는 프레임 전체를 축소하므로 본체와 그림자의 간격까지 비례해서
+    작아진다. "작게 + 더 높이" 를 동시에 만족시키려면 *프레임 안에서* 본체를 줄여 위쪽 여유를
+    확보한 뒤 그만큼 더 띄워야 한다. 화면에서 보이는 크기가 곧 줄어든 크기라 화질 손실도
+    체감되지 않는다(어차피 그 크기로 그려진다).
+
+    🛑 발을 기준으로 재정렬하는 것이 핵심이다. 그냥 축소만 하면 캔버스 중앙 기준으로 줄어들어
+    발이 공중으로 뜨고, 뒤이어 깔리는 그림자와 어긋난다."""
+    if scale == 1.0:
+        return im
+    w, h = im.size
+    bb = im.getbbox()
+    if not bb:
+        return im
+    small = im.resize((max(1, int(round(w * scale))), max(1, int(round(h * scale)))),
+                      Image.LANCZOS)
+    sbb = small.getbbox()
+    if not sbb:
+        return im
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    # 가로는 원래 실루엣 중심을 유지하고, 세로는 발을 foot_y 에 다시 붙인다.
+    dx = int(round((bb[0] + bb[2]) / 2.0 - (sbb[0] + sbb[2]) / 2.0))
+    dy = int(round(foot_y - sbb[3]))
+    out.paste(small, (dx, dy))
+    return out
 
 
 def composite_one(im, lift, foot_y, rx, ry, alpha, blur, cx=None):
@@ -136,12 +172,16 @@ def main(argv=None):
             h = im.height
         if not bb:
             continue
+        # 🛑 여유는 **축소를 반영한 뒤** 재야 한다 — --body-scale 로 본체를 줄이면 발을 foot_y 에
+        #    붙인 채 위쪽이 그만큼 비므로, 원본 bbox 로 재면 실제보다 여유를 작게 보고해
+        #    "잘린다" 는 거짓 경고가 난다(그리고 줄 수 있는 lift 를 못 준다).
+        top_after = (a.foot_frac * h) - (bb[3] - bb[1]) * a.body_scale
         prev = tops.get(act)
-        tops[act] = (bb[1] if prev is None else min(prev[0], bb[1]), h)
+        tops[act] = (top_after if prev is None else min(prev[0], top_after), h)
     for act, (top, h) in sorted(tops.items()):
         need = a.lift * (h / CELL_BASE)
         mark = "⚠️ 잘림" if need > top else "ok"
-        print(f"     [{act}] 캔버스 {h} · 상단 여유 {top}px · 필요 {need:.1f}px → {mark}")
+        print(f"     [{act}] 캔버스 {h} · 상단 여유 {top:.0f}px · 필요 {need:.1f}px → {mark}")
         if need > top:
             print(f"[WARN] {act}: lift 가 상단 여유를 넘는다 — "
                   f"--lift {top / (h / CELL_BASE):.0f} 이하를 권한다")
@@ -157,6 +197,10 @@ def main(argv=None):
         foot_y = a.foot_frac * h          # 지면 접점 — 런타임 anchor 0.85 와 같은 축
 
         lift = 0.0 if act in no_lift else a.lift * k
+
+        # 🛑 **축소를 먼저** 한다 — 아래 실루엣 측정이 축소본 기준이어야 그림자도 함께 작아진다.
+        #    원본 기준으로 재면 줄어든 기체 밑에 예전 크기의 그림자가 남아 따로 논다.
+        im = scale_body(im, a.body_scale, foot_y)
 
         # 🛑 이 프레임의 **실루엣**을 재서 그림자를 맞춘다 — 방향마다 폭이 다르므로
         #    고정 타원을 쓰면 "드론은 길쭉한데 그림자만 동그란" 어색함이 생긴다.
@@ -185,7 +229,7 @@ def main(argv=None):
             n_lift += 1
 
     print(f"[OK] ground_shadow — 프레임 {len(files)}장 · 그림자 {n_shadow} · 띄움 {n_lift} "
-          f"(화면 lift={a.lift:.0f}px → 캔버스별 환산, foot={a.foot_frac}, "
+          f"(화면 lift={a.lift:.0f}px → 캔버스별 환산, 본체 ×{a.body_scale:g}, foot={a.foot_frac}, "
           f"그림자=실루엣폭×{a.width_ratio} · 납작도 {a.flat} · a{a.alpha})")
     if no_lift:
         print(f"     띄우지 않은 행동: {', '.join(sorted(no_lift))}")
