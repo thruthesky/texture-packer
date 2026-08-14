@@ -700,6 +700,15 @@ def infer_kind_name_from_path(path):
         real = os.path.realpath(os.path.abspath(path))
     except OSError:
         return None, None
+    # 모델 파일 확장자가 아니면 추론하지 않는다(엉뚱한 파일로 kind 를 정하면 자산이 통째로 어긋난다).
+    if os.path.splitext(real)[1].lower() not in CHAR_EXT:
+        return None, None
+    # 이 저장소 밖의 경로는 추론하지 않는다 — 우연히 같은 이름의 폴더 구조를 만나도 오인 금지.
+    try:
+        if os.path.commonpath([real, os.path.realpath(ROOT)]) != os.path.realpath(ROOT):
+            return None, None
+    except ValueError:
+        return None, None            # 다른 드라이브(Windows) 등 비교 불가
     parts = real.split(os.sep)
     # 뒤에서부터 자산 루트 폴더(characters)를 찾아 그 다음 세그먼트를 kind 후보로 본다.
     # 🛑 2026-07-28 폴더 개명: game-assets/blend → game-assets/characters.
@@ -724,28 +733,62 @@ def infer_kind_name_from_path(path):
     return None, None
 
 
-def find_model_folder_anims(model_path, actions):
-    """모델과 **같은 폴더** 에 있는 애니메이션 폴더 경로를 반환한다(없으면 None).
+def _anim_files_in(folder, actions):
+    """Return the available action files in a folder as ``{action: path}``."""
+    out = {}
+    if not folder or not os.path.isdir(folder):
+        return out
+    for action in actions:
+        for ext in SUPPORTED_EXT:
+            path = os.path.join(folder, action + ext)
+            if os.path.isfile(path):
+                out[action] = path
+                break
+    return out
 
-    필요한 행동(actions)의 파일이 **전부** 있어야 그 폴더를 쓴다. 하나라도 없으면 None 을
-    돌려 다음 후보(animations/<name> → default)로 넘긴다.
-    🛑 모자란 것만 default 에서 섞지 않는다 — rig 가 다른 두 소스를 섞으면 특정 방향에서
-    팔이 꺾이는 retarget 회귀가 난다(asset ssot.md §retarget).
+
+def find_model_folder_anims(model_path, actions, fallback_dirs=(), work_dir=None):
+    """Use animations beside the model and fill missing actions from fallbacks.
+
+    The renderer accepts one animation directory. When a model folder only contains
+    part of the requested set, this creates a temporary merged folder without
+    modifying the source assets. All project character animations use the Mixamo
+    rig, so this preserves the intended partial-set workflow.
     """
     folder = os.path.dirname(os.path.abspath(model_path))
-    have, missing = [], []
-    for a in actions:
-        if any(os.path.isfile(os.path.join(folder, a + e)) for e in SUPPORTED_EXT):
-            have.append(a)
-        else:
-            missing.append(a)
-    if not have:
-        return None                        # 애니가 아예 없음 — 조용히 다음 후보로
-    if missing:
-        print(f"  ℹ️  모델 폴더 애니 {len(have)}/{len(actions)}개만 있어 건너뜁니다"
-              f"(없음: {', '.join(missing)}) → animations/ 에서 찾습니다")
+    local = _anim_files_in(folder, actions)
+    if not local:
         return None
-    return folder
+
+    missing = [action for action in actions if action not in local]
+    if not missing:
+        return folder
+
+    picked = dict(local)
+    for fallback in fallback_dirs:
+        if not missing:
+            break
+        found = _anim_files_in(fallback, missing)
+        picked.update(found)
+        missing = [action for action in missing if action not in picked]
+
+    source_description = f"{len(local)} model-folder action(s)"
+    if len(picked) > len(local):
+        source_description += f" + {len(picked) - len(local)} fallback action(s)"
+    if missing:
+        print(f"  ⚠️  Missing animations: {', '.join(missing)} — those actions render statically")
+
+    merged = os.path.join(work_dir or os.path.join(ROOT, "outputs"), "_anim_merged")
+    shutil.rmtree(merged, ignore_errors=True)
+    os.makedirs(merged, exist_ok=True)
+    for action, source in picked.items():
+        destination = os.path.join(merged, action + os.path.splitext(source)[1])
+        try:
+            os.link(source, destination)
+        except OSError:
+            shutil.copy2(source, destination)
+    print(f"  ℹ️  merged animations ({source_description}) -> {os.path.relpath(merged, ROOT)}/")
+    return merged
 
 
 def list_models(kind):
@@ -853,7 +896,13 @@ def prompt_missing(args):
     if args.character and not args.animations:
         _acts = [a.strip() for a in (args.actions or "").split(",") if a.strip()] \
             or KIND_POLICY.get(args.kind, {}).get("actions", DEFAULT_ACTIONS)
-        _local = find_model_folder_anims(args.character, _acts)
+        # Fallback order matches sheet.py: the same-name animation set first,
+        # then the shared default set. Missing actions are merged into a
+        # temporary folder so the renderer still receives one directory.
+        _fbs = [os.path.join(ROOT, ANIM_ROOT, args.name or ""),
+                os.path.join(ROOT, ANIM_ROOT, "default")]
+        _local = find_model_folder_anims(args.character, _acts, _fbs,
+                                         work_dir=os.path.join(ROOT, "outputs"))
         if _local:
             args.animations = _local
             print(f"  ℹ️  애니 자동(모델 폴더): {os.path.relpath(_local, ROOT)}/")
@@ -1532,39 +1581,32 @@ def validate_atlas(atlas_path, kind, directions=None):
           f"(page {len(page_order)} · region {len(regions)})")
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  R2 lazy-download exclusion + pubspec.yaml update.
+# ─────────────────────────────────────────────────────────────────────────────
 def _remote_excluded_paths():
-    """R2 lazy download 로 뺀 자산 경로 집합(없으면 빈 집합).
+    """Return asset paths excluded from the Flutter bundle for R2 lazy download.
 
-    판정 SSOT 는 저장소의 `tools/assets/bundle_exclusion.py` 다 — 이 스킬 스크립트가 그 모듈을
-    import 해 **같은 답** 을 쓴다(두 곳에 규칙을 복제하면 반드시 갈라진다). 모듈이 없는
-    저장소(이 스킬을 다른 프로젝트에서 쓰는 경우)에서는 빈 집합 → 기존 동작 그대로.
-
-    🛑 mac 쪽 `sheet.py` 와 **반드시 같이** 유지할 것 — 한쪽에만 있으면 그 OS 에서 재생성할 때
-       R2 로 뺀 자산이 조용히 pubspec 으로 복귀한다(2026-08-14 실측: 이 함수가 win 판에만
-       없어 84파일 55.03 MiB 가 복귀 가능한 상태였다).
+    The exclusion rules live in ``tools/assets/bundle_exclusion.py``. If this
+    repository is used without that optional module, preserve the standalone
+    texture-packer behavior and return an empty set. Dependency/configuration
+    failures from an installed exclusion module are propagated so remote assets
+    cannot silently return to the application bundle.
     """
     try:
         sys.path.insert(0, os.path.join(ROOT, "tools", "assets"))
-        import bundle_exclusion  # type: ignore
-        ex = bundle_exclusion.excluded_paths()
-        if ex:
-            print(f"  ℹ️ R2 lazy download 제외 {len(ex)}개 — pubspec 등록에서 뺍니다")
-        return ex
+        import bundle_exclusion
+        excluded = bundle_exclusion.excluded_paths()
+        if excluded:
+            print(f"  ℹ️  Excluding {len(excluded)} R2 lazy-download asset(s) from pubspec")
+        return excluded
     except RuntimeError:
-        # 🛑 **통과시킨다(fail-closed).** `bundle_exclusion` 은 PyYAML 이 없어 제외 목록을 *읽을 수
-        #    없을 때* 이 예외를 던진다 — 그 상황에서 빈 집합을 돌려주면 **R2 로 뺀 자산이 말없이
-        #    번들로 복귀**한다(몬스터 하나만 재생성해도 스토어 용량이 원상복구된다).
-        #    모듈 자체가 없는 저장소(이 스킬을 다른 프로젝트에서 쓰는 경우)는 ImportError 라
-        #    아래 분기로 가므로, 이 raise 가 타 프로젝트 사용을 막지는 않는다.
         raise
-    except Exception as e:  # 모듈 없음(다른 프로젝트) 등 — 경고 후 기존 동작 그대로
-        print(f"  ⚠️ R2 제외 목록을 읽지 못했습니다({e}) — 번들에 다시 포함될 수 있습니다")
+    except Exception as exc:
+        print(f"  ⚠️  Could not read R2 exclusions ({exc}) — assets may be bundled again")
         return set()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  pubspec.yaml 자동 갱신 — 이번 <name> 파일만 관리 블록에 추가.
-# ─────────────────────────────────────────────────────────────────────────────
 def update_pubspec(rel_paths):
     """pubspec 의 sheet.py 관리 블록을 assets/pc·mob·npc 디스크 스캔 기반으로 갱신한다.
 
@@ -1624,10 +1666,8 @@ def update_pubspec(rel_paths):
     # 🪟 Windows 경로 정규화 — rel_paths 는 os.path.relpath 산출이라 '\' 를 포함할 수 있다.
     norm_rel = {r.replace("\\", "/") for r in rel_paths}
     want = scanned | norm_rel
-    # 🛑 **R2 lazy download 로 뺀 자산은 등록하지 않는다.** 위 스캔은 "디스크 진실" 이라 R2 로
-    #    보낸 자산도 (업로드 원본이므로 디스크에 남아 있어) 다시 등록해 버린다. 그러면 스토어
-    #    번들이 조용히 원상복구되고 lazy download 가 무효화된다. 제외 판정 SSOT =
-    #    tools/assets/bundle_exclusion.py(→ tools/assets/remote_assets.yaml).
+    # Do not re-add assets that are served through R2 lazy download. The
+    # exclusion module is the single source of truth for that decision.
     want -= _remote_excluded_paths()
     added = sorted(want - existing)
     removed = sorted(existing - want)   # 블록에 있었으나 디스크에 없는 항목(빌드 실패 유발) → 제거
