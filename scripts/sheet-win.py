@@ -1335,6 +1335,36 @@ def align_frames_feet(frames_dir, python_bin, foot_frac=0.85, only_actions=None)
         print(f"  ✓ frame foot alignment (0.85) — {o.stdout.strip()}")
 
 
+def apply_ground_shadow(frames_dir, python_bin, lift, foot_frac=0.85, alpha=90,
+                        width_ratio=0.44, body_scale=1.0):
+    """Bake ground shadow and lift into aircraft frames after foot alignment.
+
+    This is intentionally non-idempotent: it runs once after the complete
+    render/auto-fit loop and is skipped by --build-only, because existing
+    frames may already contain the baked shadow.
+    """
+    script = os.path.join(HERE, "ground_shadow.py")
+    if not os.path.exists(script):
+        print(f"  ⚠️ ground_shadow.py not found — skipping ground shadow: {script}")
+        return
+    uv = shutil.which("uv")
+    base = [script, frames_dir, "--lift", str(lift), "--foot-frac", str(foot_frac),
+            "--alpha", str(alpha), "--width-ratio", str(width_ratio),
+            "--body-scale", str(body_scale)]
+    cmd = ([uv, "run", "--with", "pillow", "python"] + base
+           if uv else python_bin + base)
+    o = subprocess.run(cmd, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
+    if o.returncode != 0:
+        print("  ⚠️ ground shadow composition failed — continuing without shadow "
+              "(aircraft may appear grounded):\n     "
+              + (o.stderr or o.stdout or "")[-400:])
+    else:
+        tail = [line for line in (o.stdout or "").strip().splitlines() if line][-1:]
+        print(f"  ✓ ground shadow + lift {lift}px · body ×{body_scale:g} — "
+              f"{tail[0] if tail else 'ok'}")
+
+
 def inject_action_scales(atlas_path, action_scales, directions=None, display_size=None):
     """`.atlas` 첫 page 헤더(`repeat:` 줄 뒤)에 액션별 *생성 scale* 을 custom 메타로 주입한다.
 
@@ -1760,6 +1790,19 @@ def main():
                     help="K=target on-screen body height in px. display=K/body_ratio (recorded in grid manifest)")
     ap.add_argument("--directions", type=int, default=None, choices=[8, 16],
                     help="Number of directions (=number of rows). pc/mob default 16, npc default 8. The even rows of 16 match the 8 directions")
+    ap.add_argument("--display-size", type=int, default=None, dest="display_size",
+                    help="Per-asset on-screen display size in px, independent of cell size. "
+                         "If omitted, the kind policy is used (pc/mob/npc 128, minion 64, boss 256).")
+    ap.add_argument("--ground-shadow-lift", type=float, default=0.0, dest="ground_shadow_lift",
+                    help="Aircraft lift in screen px. >0 bakes a ground ellipse shadow after foot alignment; 0 disables it.")
+    ap.add_argument("--ground-shadow-alpha", type=int, default=90, dest="ground_shadow_alpha",
+                    help="Ground-shadow opacity, 0~255 (default 90).")
+    ap.add_argument("--ground-shadow-width-ratio", type=float, default=0.44,
+                    dest="ground_shadow_width_ratio",
+                    help="Shadow horizontal radius = frame silhouette width × this ratio (default 0.44).")
+    ap.add_argument("--ground-shadow-body-scale", type=float, default=1.0,
+                    dest="ground_shadow_body_scale",
+                    help="Aircraft body scale when baking a ground shadow; feet stay anchored. Example: 0.7.")
     for a in FRAME_OPTION_ACTIONS:
         ap.add_argument(f"--{a}", type=int, help=f"Number of {a} frames (cells)")
     for a in FRAME_OPTION_ACTIONS:
@@ -2390,6 +2433,19 @@ def main():
             # 다음 pass 는 scale 이 바뀐 행동만 재렌더(부분 재렌더). ACTIONS 순서를 유지한다.
             _render_only = [a for a in actions if a in set(_next_only)]
 
+        # Ground-shadow baking must happen once after auto-fit has converged.
+        # It is non-idempotent, so never run it inside the loop or on --build-only.
+        if args.ground_shadow_lift and args.ground_shadow_lift > 0:
+            print(f"\n[1-b] Baking aircraft ground shadow … (lift {args.ground_shadow_lift}px)")
+            apply_ground_shadow(
+                frames_dir,
+                python_bin,
+                args.ground_shadow_lift,
+                alpha=args.ground_shadow_alpha,
+                width_ratio=args.ground_shadow_width_ratio,
+                body_scale=args.ground_shadow_body_scale,
+            )
+
     if args.render_only:
         print("\n(--render-only) frames:", frames_dir, "\nDone.")
         return
@@ -2457,7 +2513,9 @@ def main():
         # 액션별 생성 scale 을 .atlas 헤더에 주입 → 런타임이 1/scale 로 display 배율 자동 복원.
         inject_action_scales(atlas, action_scales,
                              directions=directions,
-                             display_size=KIND_POLICY[args.kind]["display"])
+                             display_size=(args.display_size
+                                           if args.display_size is not None
+                                           else KIND_POLICY[args.kind]["display"]))
         if args.color_compression:
             print(f"  [3] Compressing page PNG(s) … (q256 · in-place)")
             for p, before, after in compress_pages(pages, python_bin, colors=256):
