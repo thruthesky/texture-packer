@@ -165,6 +165,14 @@ py .claude\skills\texture-packer\scripts\sheet-win.py .\game-assets\characters\p
   (`.blend` 는 rig 검사 면제, `--build-only` 도 면제).
 - 실측(2026-08-17 · pc 16방향 5행동): 단일 모델 47초 vs 행동별 모델 2 pass 43초 —
   두 번째 pass 는 자기 행동만 굽기 때문에 총 시간이 거의 늘지 않는다.
+- **세 스크립트 모두 실제 Blender 렌더로 검증**(2026-08-17 · Blender 5.1). 각각 행동별 모델 실행과
+  `--no-action-models` 실행을 낱장 단위로 비교해 **기본 모델 행동은 차이 0, 해당 행동만 다름** 을
+  확인했다(sheet-win.py 64/16장 · sheet.py 64/16장 · sheet-preview.py 48/12장).
+  🛑 `sheet.py` 를 *Windows 에서* 돌리면 `align_frames_feet` 의 `subprocess.run(text=True)` 가
+  로케일(cp1252)로 디코드해 `UnicodeDecodeError` → `o.stdout` 이 None 이 된다(이 기능과 무관한
+  기존 차이 — sheet-win.py 에는 `encoding="utf-8"` 이 있다). macOS 는 기본이 UTF-8 이라 발생하지
+  않고, Windows 는 원래 sheet-win.py 가 진입점이다. 굳이 mac 스크립트를 Windows 에서 돌려야 하면
+  `PYTHONUTF8=1` 로 우회한다.
 - **`sheet-preview.py` 도 규약·옵션·프레이밍 상속이 전부 동일** 하다(2026-08-17 3-파일 동기화).
   본 굽기 전에 `sheet-preview.py <모델>` 로 4방향 미리보기를 먼저 뽑아 어느 열이 어느 모델로
   나오는지 눈으로 확인하면 된다 — 미리보기가 본 굽기와 *같은* 확대율·측정 권위를 쓰므로
