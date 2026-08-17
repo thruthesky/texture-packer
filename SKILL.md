@@ -129,6 +129,43 @@ python3 .claude/skills/texture-packer/scripts/sheet.py \
   --character game-assets/characters/mob/chassis/chassis.blend --animations default --auto
 ```
 
+#### 🧩 한 시트를 **여러 .blend 로** 굽기 — 행동별 모델(per-action model)
+
+행동마다 다른 모델 파일을 쓸 수 있다. 예를 들어 attack 만 무기를 든 별도 `.blend` 로 굽고
+나머지는 기본 모델로 굽는다. **파일 이름 규약만 지키면 옵션이 필요 없다.**
+
+```
+game-assets/characters/pc/male/male_claudean/
+  male_claudean.blend            ← 기본 모델(idle·walk·death·run)
+  male_claudean_attack.blend     ← attack 열만 이 모델로 렌더 (자동 발견)
+  idle.fbx walk.fbx attack.fbx death.fbx run.fbx   ← 애니메이션(그대로 공유)
+```
+
+```bash
+# 아무 옵션도 필요 없다 — <파일이름>_<action>.<확장자> 형제를 자동으로 집는다
+py .claude\skills\texture-packer\scripts\sheet-win.py .\game-assets\characters\pc\male\male_claudean\male_claudean.blend
+
+# 파일 이름이 규약과 다르면 명시(자동 발견보다 우선)
+… --character-attack game-assets/characters/pc/male/male_claudean/변형.blend
+
+# 자동 발견을 끄고 기본 모델 하나로만 굽기
+… --no-action-models
+```
+
+- **규약은 `<모델파일이름>_<action>.<확장자>`** — 접두사가 핵심이다. 같은 폴더의 애니메이션은
+  `attack.fbx` 처럼 *행동 이름 그대로* 놓이므로(§애니메이션 3단 우선순위 ①), 접두사가 없으면
+  애니를 모델로 오인한다. 대상 행동은 `idle·walk·run·attack·death`(npc `look·talk·wave`).
+- **모델 수만큼 Blender pass 가 늘고 결과는 한 장으로 합쳐진다.** 로그에
+  `per-action models — 2 Blender passes: …` 가 뜨고, 각 pass 는 *자기 행동의 낱장만* 다시 굽는다.
+- 🛑 **프레이밍·측정의 권위는 기본 모델(첫 pass)** 이다. 행동별 모델 pass 는 기본 모델의
+  `ortho`(확대율)를 물려받고 `_measure.json`(body_ratio/foot_anchor)을 덮어쓰지 않는다 —
+  안 그러면 모델마다 bbox 가 달라 **attack 열만 캐릭터 크기가 튄다**. 중심 정렬·발 정렬은
+  각 모델 것으로 계산되므로 자세가 달라도 발 높이는 맞는다.
+- **애니메이션은 모든 pass 가 같은 폴더를 쓴다** — 행동별 모델도 Mixamo rig 여야 한다
+  (`.blend` 는 rig 검사 면제, `--build-only` 도 면제).
+- 실측(2026-08-17 · pc 16방향 5행동): 단일 모델 47초 vs 행동별 모델 2 pass 43초 —
+  두 번째 pass 는 자기 행동만 굽기 때문에 총 시간이 거의 늘지 않는다.
+
 - 인자를 전부 생략하면 터미널에서 순서대로 물어본다(대화형).
 - **신규 PC·몬스터는 반드시 16방향**(기본). `--directions 8` 은 boss/minion 규격이거나 legacy 재생성 전용.
 - 일괄 재생성은 `scripts/regen_mobs.sh`·`regen_pc.sh`·`regen_npc.sh`.
@@ -208,6 +245,8 @@ flutter 실행 없이 **생성 이미지 검사만으로** 잡아 자동 조정�
 | `--look/--talk/--wave N` | 8 | npc 전용 행동 프레임 수 |
 | `--scale-<action>` | **미지정 시 대화형 질문**(기본 제안 **전부 1.0** — `SCALE_PROMPT_DEFAULTS`; 비대화형은 그 값 적용) | 행동별 생성 scale. `<1` 이면 모델을 작게 구워(무기/모션 128 셀 밖 잘림 방지) `.atlas` 의 `laryen.actionScale.<action>` 메타에 기록 → **게임 런타임이 1/scale 로 원래 크기 복원**([references/pipeline.md](references/pipeline.md) §6). 🛑 과거의 **walk 0.9 · attack 0.8 일괄 축소 프리셋은 폐기**됐다(2026-07-09 셀 확대 전환) — 셀 확대는 atlas RAM(iOS OOM)·page 폭(8192 한계)을 키우므로 *잘리지 않는 행동까지 무조건 키우지 않는다*. 잘리는 행동만 `--auto-fit-scale` 이 검출해 낮춘다. 🛑 `--auto-fit-scale` 사용 시 이 값은 **무시** 됨(1.0 에서 자동 조정) |
 | `--weapon / --weapon-bone …` | — | 무기 손 본 장착 |
+| `--character-<action> PATH` | — | **행동별 모델** — 그 행동만 다른 모델(.blend/.fbx/.glb)로 렌더해 같은 시트에 합친다(모델별 Blender pass). 대상 행동 `idle·walk·run·attack·death`(npc `look·talk·wave`) |
+| `--action-models {true\|false}` | **true** | 모델 옆 `<파일이름>_<action>.<확장자>` 형제를 그 행동에 **자동** 사용(예 `male_claudean_attack.blend` → attack). `--no-action-models` 로 끔. 🛑 접두사 없는 `<action>.fbx` 는 *애니메이션* 이라 대상이 아니다 |
 | `--directions {8\|16}` | 16(npc 8) | 신규는 16 고정. 8 은 legacy 재생성 전용 |
 | `--run-animation {true\|false}` | — | mob run 애니 포함 여부(지정 시 대화형 질문 생략) |
 | `--rotation [true\|false]` | **actor kind 는 false · 그 외 true** (미지정 시 대화형 질문·기본 제안 Y·**비대화형은 `kind not in ACTOR_KINDS`**) | 회전 packing(공간 절약·page 픽셀↓=RAM↓). 🛑 **`ACTOR_KINDS = ALL_KINDS` 라 pc·mob·npc·boss·minion 은 전부 actor** — 비대화형·`--auto` 어느 경로로도 **자동으로 false** 가 된다(발 어긋남·16방향 패킹 20분+ 방지). 대화형 질문에는 n 권장 경고가 뜬다. 정적 타일/decor 는 true 가 이득. `--no-rotation` 은 false 별칭 |

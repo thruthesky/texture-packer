@@ -640,6 +640,15 @@ char_w = max(cx1 - cx0, cy1 - cy0)
 # MARGIN 으로 여백을 두고, SCALE 로 나눠 모델 전체를 키움(>1)/줄임(<1). SCALE=1 이면 무변화.
 # base ortho (= 무기 제외 몸 bbox × margin). 행동별 scale 은 _ascale 로 렌더 시 나눈다.
 ortho = max(char_h, char_w) * MARGIN
+# 🛑 행동별 모델(sheet.py `--character-<action>` / `<stem>_<action>.blend`) pass 는 *기본 모델이
+# 계산한 ortho* 를 그대로 물려받는다(cfg["ortho_base"]). 모델마다 자기 bbox 로 다시 프레이밍하면
+# 같은 캐릭터인데도 attack 열만 확대/축소돼(팔 벌림·망토·무기 스키닝 차이로 body bbox 가 달라진다)
+# 열 사이에서 캐릭터 크기가 튄다. 중심(target)은 각 모델 bbox 로 잡으므로 정렬은 자기 것을 쓴다.
+_ortho_inherited = cfg.get("ortho_base")
+if _ortho_inherited:
+    print(f"####INFO ortho_base 상속(행동별 모델 pass) {float(_ortho_inherited):.3f} "
+          f"← 자체 계산 {ortho:.3f} 대신 기본 모델 프레이밍 사용")
+    ortho = float(_ortho_inherited)
 def _ascale(name):
     # 그 행동의 최종 scale. sheet.py 가 전역 --scale 까지 채워 보내지만, 직접 cfg 호출 등으로
     # ACTION_SCALES 가 비어 있으면 전역 SCALE 을 기본값으로 쓴다(이중 적용 없음). 0 가드.
@@ -875,7 +884,11 @@ def measure_body_foot():
         json.dump(res, open(MEASURE_PATH, "w", encoding="utf-8"))
     return res
 
-measure_body_foot()
+# 🛑 행동별 모델 pass 는 측정을 건너뛴다(cfg["skip_measure"]). body_ratio/foot_anchor 는 *기본
+# 모델*(첫 pass)의 값이 시트 전체의 권위이고, override 모델이 덮어쓰면 display=K/body_ratio 가
+# 그 모델 기준으로 흔들려 게임 내 표시 크기가 바뀐다. (sheet-preview.py 도 같은 키를 쓴다.)
+if not cfg.get("skip_measure"):
+    measure_body_foot()
 
 # ── 렌더 루프 ─────────────────────────────────────────────────────────
 # 무기(검 등) 메시 — 발 측정 렌더에서 숨긴다(발바닥만 남기려고). body(무기 제외)의 여집합.

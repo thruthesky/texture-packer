@@ -696,6 +696,88 @@ def list_models(kind):
     return sorted(set(out))
 
 
+def resolve_actor_model(path, kind, role, build_only=False, announce_blend=True):
+    """모델 경로 하나를 검증해 실제 경로로 돌려준다 — `--character` 와 `--character-<action>` 공용.
+
+    검사는 세 가지다: ① 존재(없으면 kind 폴더 기준 상대경로·확장자 생략 보정) ② 지원 확장자
+    ③ Mixamo rig. `.blend` 는 Blender 가 직접 열어 rig 를 그대로 쓰므로 ③을 건너뛰고,
+    `--build-only` 도 Blender 를 아예 띄우지 않아 건너뛴다(기존 단일 모델 경로와 동일 규칙).
+    🛑 win 쪽 sheet-win.py 와 동일하게 유지할 것(형제 파일 동기화).
+    """
+    if not os.path.isfile(path):
+        cand = os.path.join(ROOT, KIND_MODEL_DIR.get(kind, ""), path)
+        if os.path.isfile(cand):
+            path = cand
+        else:
+            alt = next((path + e for e in CHAR_EXT if os.path.isfile(path + e)), None)
+            if alt:
+                print(f"  ℹ️  '{path}' 없음 → 확장자 자동 보정: {alt}")
+                path = alt
+            else:
+                sys.exit(f"{role} 모델이 없습니다: {path}\n"
+                         f"   → 지원 확장자: {'/'.join(CHAR_EXT)}")
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in CHAR_EXT:
+        sys.exit(f"지원하지 않는 {role} 형식: {ext or '(확장자 없음)'} — {path}")
+    if ext == ".blend":
+        if announce_blend:
+            print("  ℹ️  .blend 캐릭터 — Blender 로 직접 열어 렌더.")
+    elif not build_only:
+        assert_mixamo_rig(path, role)
+    return path
+
+
+def find_action_models(character, actions):
+    """모델 옆의 `<파일이름>_<action>.<확장자>` 형제 파일을 찾아 ``{action: path}`` 로.
+
+    한 시트를 여러 모델 파일로 굽기 위한 *자동 발견* 규약이다. 예를 들어
+    `…/male_claudean/male_claudean.blend` 를 굽는데 같은 폴더에 `male_claudean_attack.blend` 가
+    있으면 attack 열만 그 모델로 렌더한다(나머지는 기본 모델). `--character-<action>` 을 명시하면
+    그쪽이 이긴다.
+
+    🛑 접두사(`<파일이름>_`)가 규약의 핵심이다 — 같은 폴더에는 애니메이션 파일이
+    `attack.fbx`·`walk.fbx` 처럼 *행동 이름 그대로* 놓이므로(find_model_folder_anims),
+    접두사 없는 `<action>.<ext>` 를 모델로 집으면 애니를 모델로 오인해 렌더가 통째로 깨진다.
+    확장자는 기본 모델과 같은 것을 먼저 본다(.blend 자산이면 .blend 형제 우선).
+    """
+    folder = os.path.dirname(os.path.abspath(character))
+    stem = os.path.splitext(os.path.basename(character))[0]
+    own = os.path.splitext(character)[1].lower()
+    exts = [own] + [e for e in CHAR_EXT if e != own]
+    found = {}
+    for action in actions:
+        for ext in exts:
+            cand = os.path.join(folder, f"{stem}_{action}{ext}")
+            if os.path.isfile(cand):
+                found[action] = cand
+                break
+    return found
+
+
+def wipe_stale_frames(frames_dir, actions=None):
+    """낱장 PNG 를 지운다(부모 쪽 스테일 정리). ``actions=None`` 이면 전부, 리스트면 그 행동만.
+
+    단일 모델 경로에서는 `_sheet_render.py` 가 `only_actions=None` 으로 전체를 지우지만,
+    행동별 모델(여러 pass)에서는 각 pass 가 *자기 행동만* 지우므로 아무 pass 도 지우지 않는
+    옛 낱장(예: 지난 실행의 `run_*.png` — 이번 실행 행동 목록엔 없다)이 남아 packing 에 섞인다.
+    그래서 여러 pass 를 돌리기 직전에 부모가 렌더러와 *같은 범위* 로 한 번 정리한다.
+    파일명 규약 `{action}_{DIR}_{idx}.png` 도 렌더러와 동일하다.
+    """
+    prefixes = tuple(f"{a}_" for a in actions) if actions else None
+    for d in (frames_dir, os.path.join(frames_dir, "_foot")):
+        if not os.path.isdir(d):
+            continue
+        for f in os.listdir(d):
+            if not f.endswith(".png"):
+                continue
+            if prefixes and not f.startswith(prefixes):
+                continue
+            try:
+                os.remove(os.path.join(d, f))
+            except OSError:
+                pass
+
+
 def prompt_missing(args):
     """필수 값(character/kind/name/animations)이 없으면 대화형으로 채운다."""
     interactive = _interactive_ok()
@@ -1639,6 +1721,21 @@ def main():
     ap.add_argument("--actor", "--character", dest="character", default=None,
                     help="액터(캐릭터/몬스터) 모델(.fbx / .glb / .gltf / .blend). 확장자로 import 자동 분기. "
                          "생략 시 대화형 선택(--kind 폴더에서).")
+    # ── 행동별 모델(per-action model) — 한 시트를 여러 모델 파일로 굽는다 ──────────────
+    # --character 는 *기본* 모델이고, 행동 하나를 다른 모델로 굽고 싶으면 --character-<action> 을
+    # 준다(그 행동만 자기 Blender pass 에서 렌더돼 같은 시트에 합쳐진다). 명시하지 않아도 모델 옆에
+    # `<파일이름>_<action>.<확장자>` 가 있으면 자동으로 그 행동에 쓴다(--action-models, 기본 켜짐).
+    for _act in FRAME_OPTION_ACTIONS:
+        ap.add_argument(f"--character-{_act}", f"--actor-{_act}", dest=f"character_{_act}", default=None,
+                        help=f"'{_act}' 행동만 이 모델로 렌더(기본: --character). --character 와 같은 형식이며 "
+                             f"자동 발견된 <모델이름>_{_act}.<확장자> 형제보다 우선한다.")
+    ap.add_argument("--action-models", dest="action_models", type=str2bool, nargs="?", const=True,
+                    default=True, metavar="{true,false}",
+                    help="모델 옆의 행동별 형제 모델 자동 사용 — <모델이름>_<action>.<확장자> 가 있으면 그 행동을 "
+                         "그 모델로 렌더한다(예: male_claudean_attack.blend → attack). 기본 true. "
+                         "같은 폴더의 애니메이션은 <action>.fbx(접두사 없음)라 모델로 오인되지 않는다.")
+    ap.add_argument("--no-action-models", dest="action_models", action="store_const", const=False,
+                    help="<모델이름>_<action> 형제 모델을 무시한다(--action-models false 별칭).")
     ap.add_argument("--kind", default=None, choices=list(ALL_KINDS),
                     help="액터 카테고리 — pc(플레이어/사람형·16방향), mob(몬스터·16방향), npc(마을 NPC·1방향 idle), "
                          "boss(보스 몬스터·8방향), minion(졸개 몬스터·8방향·64 cell·화면 절반 크기). "
@@ -1969,30 +2066,48 @@ def main():
     name = args.name
 
     # ── 입력(모델) 검증 ──
-    if not os.path.isfile(args.character):
-        # kind 폴더 기준 상대경로도 시도.
-        cand = os.path.join(ROOT, KIND_MODEL_DIR[args.kind], args.character)
-        if os.path.isfile(cand):
-            args.character = cand
-        else:
-            alt = next((args.character + e for e in CHAR_EXT
-                        if os.path.isfile(args.character + e)), None)
-            if alt:
-                print(f"  ℹ️  '{args.character}' 없음 → 확장자 자동 보정: {alt}")
-                args.character = alt
-            else:
-                sys.exit(f"캐릭터 모델이 없습니다: {args.character}\n"
-                         f"   → 지원 확장자: {'/'.join(CHAR_EXT)}")
+    # 🛑 --build-only 는 기존 낱장을 다시 패킹만 하므로 Blender 를 아예 띄우지 않는다 —
+    #    모델·애니의 rig 규격은 결과에 영향을 주지 않으니 rig 검사를 하지 않는다. 이 예외가 없으면
+    #    비인간형(Mixamo rig 아님) 자산(minion 등)은 *재패킹조차* 못 한다(실측 mini_red).
+    args.character = resolve_actor_model(args.character, args.kind, "캐릭터(--character)",
+                                         build_only=args.build_only)
     char_ext = os.path.splitext(args.character)[1].lower()
-    if char_ext not in CHAR_EXT:
-        sys.exit(f"지원하지 않는 캐릭터 형식: {char_ext or '(확장자 없음)'} — {args.character}")
-    if char_ext == ".blend":
-        print("  ℹ️  .blend 캐릭터 — Blender 로 직접 열어 렌더.")
-    elif not args.build_only:
-        # 🛑 --build-only 는 기존 낱장을 다시 패킹만 하므로 Blender 를 아예 띄우지 않는다 —
-        #    모델·애니의 rig 규격은 결과에 영향을 주지 않으니 검사하지 않는다. 이 예외가 없으면
-        #    비인간형(Mixamo rig 아님) 자산(minion 등)은 *재패킹조차* 못 한다(실측 mini_red).
-        assert_mixamo_rig(args.character, "캐릭터(--character)")
+
+    # ── 행동별 모델(per-action model) 배정 ──────────────────────────────────────
+    # 행동 → 그 행동을 렌더할 모델. 기본은 전부 --character 이고, ① 옆에 있는
+    # `<파일이름>_<action>.<확장자>` 형제(--action-models, 기본 켜짐) ② --character-<action> 명시
+    # 순으로 덮어쓴다(명시가 최우선). 배정이 갈리면 아래 [1] 렌더가 모델별 pass 로 나뉜다.
+    action_character = {a: args.character for a in actions}
+    if args.action_models:
+        for a, p in find_action_models(args.character, actions).items():
+            action_character[a] = resolve_actor_model(p, args.kind, f"행동 모델('{a}')",
+                                                      build_only=args.build_only,
+                                                      announce_blend=False)
+            print(f"  ✓ 행동별 모델 자동 발견: {a} -> {os.path.basename(action_character[a])}")
+    for a in FRAME_OPTION_ACTIONS:
+        ov = getattr(args, f"character_{a}", None)
+        if not ov:
+            continue
+        if a not in actions:
+            print(f"  ⚠️  --character-{a} 를 줬지만 '{a}' 는 이번 행동 목록에 없습니다 "
+                  f"({', '.join(actions)}) — 무시합니다.")
+            continue
+        action_character[a] = resolve_actor_model(ov, args.kind, f"행동 모델(--character-{a})",
+                                                  build_only=args.build_only,
+                                                  announce_blend=False)
+        print(f"  ✓ 행동별 모델 지정: {a} -> {action_character[a]}")
+    # 모델별 pass 순서 — 기본 모델이 항상 첫 pass(= 권위 pass: _measure.json 과 ortho 프레이밍을
+    # 여기서 확정하고 나머지 pass 가 물려받는다). 기본 모델이 아무 행동도 안 맡으면(전 행동 override)
+    # 첫 override 모델이 권위를 갖는다.
+    pass_chars = []
+    for a in actions:
+        ca = os.path.abspath(action_character[a])
+        if ca not in pass_chars:
+            pass_chars.append(ca)
+    if os.path.abspath(args.character) in pass_chars:
+        pass_chars.remove(os.path.abspath(args.character))
+        pass_chars.insert(0, os.path.abspath(args.character))
+    multi_model = len(pass_chars) > 1
 
     # ── 무기(선택) ──
     weapon_bone = "mixamorig:RightHand"
@@ -2165,6 +2280,9 @@ def main():
     rel_folder = os.path.relpath(out_folder, ROOT)
     print("=" * 64)
     print(f"  액터       : {args.character}  (형식 {char_ext}, kind={args.kind}, name={name})")
+    for _a in actions:      # 행동별 모델이 배정된 행동만 한 줄씩(없으면 아무 줄도 안 나온다)
+        if os.path.abspath(action_character[_a]) != os.path.abspath(args.character):
+            print(f"   └ 행동     : {_a:<7} -> {action_character[_a]}  (행동별 모델)")
     print(f"  애니 소스  : {animations_dir or '캐릭터 내장(built-in)'}  ({', '.join(actions)})")
     if args.weapon:
         print(f"  무기 장착  : {args.weapon} → {weapon_bone}")
@@ -2190,39 +2308,50 @@ def main():
     t_all0 = time.monotonic()  # 전체 소요 측정 시작(간략 진행 표시용)
     # ── [1] Blender 렌더 → 낱장 ──
     if not args.build_only:
-        # auto-fit-scale: cell 잘림을 발견하면 scale 을 낮춰 재렌더(최대 6회 수렴 — step 하강으로
-        # 0.667 하한=셀 1.5배(192)까지 도달 가능). 미지정이면 1회 렌더.
-        _max_fit = 6 if args.auto_fit_scale else 0
-        # 🚀 부분 재렌더 최적화: 잘린 행동만 다시 굽는다. pass 0 은 전체(_render_only=None),
-        # pass 1+ 은 직전 검사에서 scale 을 낮춘 행동 집합만(_render_only) 재렌더한다. 이렇게 하면
-        # attack 만 잘렸을 때 idle/walk/hit/death/run 을 매 pass 다시 굽는 낭비가 사라진다.
-        _render_only = None
-        for _fit in range(_max_fit + 1):
-            # 이번 pass 가 실제 렌더하는 프레임 수(진행률·마커 누락 판정용). 전체=total_frames,
-            # 부분=재렌더 대상 행동의 프레임 합. 부분이어도 디스크 파일 총합은 total_frames 로 유지된다.
-            _pass_frames = (total_frames if not _render_only else
-                            directions * sum(frames.get(a, 8) for a in _render_only))
-            if _fit == 0:
-                print(f"\n[1] Blender 렌더 중 … (총 {total_frames}장 = {directions}방향 × {sum(frames.get(a, 8) for a in actions)}프레임)")
-            else:
-                cfg["action_scales"] = action_scales  # auto-fit 으로 낮춘 scale 반영
-                cfg["only_actions"] = list(_render_only) if _render_only else None  # 부분 재렌더 화이트리스트
-                json.dump(cfg, open(cfg_path, "w"), indent=2)
-                _scope = (f"잘린 행동만: {', '.join(_render_only)} ({_pass_frames}장)"
-                          if _render_only else "전체")
-                print(f"\n[1·auto-fit {_fit}/{_max_fit}] 조정된 scale 로 재렌더 중 … {_scope}")
+        # ── 행동별 모델 → 모델별 Blender pass 계획 ────────────────────────────────
+        # 같은 모델을 쓰는 행동끼리 묶어 Blender 를 *모델 수만큼만* 띄운다. 행동별 모델이 하나도
+        # 없으면 그룹이 1개뿐이라 아래 흐름은 기존(단일 모델)과 완전히 동일하다.
+        # 🛑 권위(authority) pass 는 *계획 시점에 한 번* 정한다(= pass_chars[0], 보통 --character).
+        #    그 pass 만 _measure.json(body_ratio/foot_anchor)을 쓰고 ortho(프레이밍)를 계산하며,
+        #    나머지 pass 는 그 ortho 를 물려받아(cfg["ortho_base"]) 같은 확대율로 렌더한다.
+        #    "지금 도는 첫 pass" 를 권위로 삼으면 auto-fit 부분 재렌더에서 override 행동만 다시
+        #    구울 때 권위가 그쪽으로 옮겨가 그 열만 캐릭터 크기·표시 크기가 튄다.
+        authority_char = pass_chars[0]
+        ortho_base = None      # 권위 pass 의 ####FRAMING ortho_base — override pass 가 상속
+
+        def _groups_for(scope):
+            """이번에 렌더할 행동(scope=None 이면 전체)을 모델별로 묶어 [(모델, [행동…])] 로."""
+            todo = [a for a in actions if scope is None or a in set(scope)]
+            out = []
+            for _c in pass_chars:          # 권위(기본) 모델이 항상 먼저
+                _acts = [a for a in todo if os.path.abspath(action_character[a]) == _c]
+                if _acts:
+                    out.append((_c, _acts))
+            return out
+
+        def _run_blender(pass_cfg_path, pass_frames, tag=""):
+            """Blender 1회 실행 + 간략 진행 표시. 실패 시 즉시 종료. 반환: (렌더한 장수, ortho_base)."""
             t_r0 = time.monotonic()
             proc = subprocess.Popen(
-                [blender, "-b", "-P", os.path.join(HERE, "_sheet_render.py"), "--", cfg_path],
+                [blender, "-b", "-P", os.path.join(HERE, "_sheet_render.py"), "--", pass_cfg_path],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
                 encoding="utf-8", errors="replace",
             )
             # 간략 진행: 24장마다 진행률·속도·ETA·현재 행동을 한 줄로. --verbose 면 Blender 전체 로그.
-            saved, errs, render_done, cur_action = 0, [], False, ""
+            saved, errs, render_done, cur_action, seen_ortho = 0, [], False, "", None
             for line in proc.stdout:
                 line = line.rstrip()
                 if line.startswith("####RENDER_DONE"):
                     render_done = True
+                if line.startswith("####FRAMING "):
+                    # 권위 pass 의 프레이밍(ortho_base=…)을 뽑아 두면 뒤따르는 행동별 모델 pass 가
+                    # 같은 확대율로 렌더된다(열 사이 캐릭터 크기 튐 방지).
+                    for _tok in line.split():
+                        if _tok.startswith("ortho_base="):
+                            try:
+                                seen_ortho = float(_tok.split("=", 1)[1])
+                            except ValueError:
+                                pass
                 if args.verbose:
                     print(line); continue
                 if line.startswith("####ACTION "):
@@ -2233,18 +2362,18 @@ def main():
                     # print(flush=True) 로 찍는 결정적 마커. Blender 의 C-level `Saved: '…'` 는
                     # Windows 에서 pipe block-buffering 으로 실시간 도착이 안 돼(macOS 만 정상) 프레임
                     # 로그가 안 보였다 → 이 마커는 _foot 마스크를 세지 않고 최종 프레임만 정확히
-                    # _pass_frames 개 나오므로 로그·진행률 둘 다 이걸로 구동한다(clamp 불필요).
+                    # pass_frames 개 나오므로 로그·진행률 둘 다 이걸로 구동한다(clamp 불필요).
                     saved += 1
                     fname = line[len("####FRAME "):].strip()
                     print(f"   · frame {fname}", flush=True)
-                    # 진행률 분모는 *이번 pass* 프레임 수(_pass_frames) — 부분 재렌더면 재렌더 대상만.
-                    if saved % 24 == 0 or saved >= _pass_frames:
+                    # 진행률 분모는 *이번 pass* 프레임 수 — 부분 재렌더·행동별 모델이면 그 몫만.
+                    if saved % 24 == 0 or saved >= pass_frames:
                         el = time.monotonic() - t_r0
                         fps = saved / el if el > 0 else 0
-                        eta = max(0, (_pass_frames - saved)) / fps if fps > 0 else 0
-                        pct = int(saved / _pass_frames * 100) if _pass_frames else 0
+                        eta = max(0, (pass_frames - saved)) / fps if fps > 0 else 0
+                        pct = int(saved / pass_frames * 100) if pass_frames else 0
                         tail = f" · {cur_action}" if cur_action else ""
-                        print(f"   … {saved}/{_pass_frames} ({pct}%) · {fps:.1f}장/s · ETA {_fmt_dur(eta)}{tail}",
+                        print(f"   … {saved}/{pass_frames} ({pct}%) · {fps:.1f}장/s · ETA {_fmt_dur(eta)}{tail}",
                               flush=True)
                 elif line.startswith("####"):
                     print("   " + line[4:])
@@ -2256,19 +2385,75 @@ def main():
                 elif any(k in line for k in ("Error", "Traceback", "Exception", "Failed")):
                     errs.append(line)
             proc.wait()
-            actual_frames = (len([f for f in os.listdir(frames_dir) if f.endswith(".png")])
-                             if os.path.isdir(frames_dir) else 0)
+            on_disk = (len([f for f in os.listdir(frames_dir) if f.endswith(".png")])
+                       if os.path.isdir(frames_dir) else 0)
             _r_dt = time.monotonic() - t_r0
-            if proc.returncode == 0 and not render_done and actual_frames >= total_frames:
-                print(f"   ⚠️ RENDER_DONE 마커 누락이나 frames {actual_frames}/{total_frames} 완성 → 진행")
+            if proc.returncode == 0 and not render_done and on_disk >= total_frames:
+                print(f"   ⚠️ RENDER_DONE 마커 누락이나 frames {on_disk}/{total_frames} 완성 → 진행")
                 render_done = True
             if proc.returncode != 0 or not render_done:
-                print("   ❌ 렌더 실패 — 입력 FBX / Blender 로그 확인:")
+                print(f"   ❌ 렌더 실패{tag} — 입력 FBX / Blender 로그 확인:")
                 for e in errs[-20:]:
                     print("     " + e)
                 sys.exit("렌더 실패")
-            print(f"   ✓ 렌더 완료 — {actual_frames}장 · {_fmt_dur(_r_dt)}"
-                  + (f" · {actual_frames / _r_dt:.1f}장/s" if _r_dt > 0 else ""))
+            print(f"   ✓ 렌더 완료{tag} — {saved}장 (디스크 {on_disk}장) · {_fmt_dur(_r_dt)}"
+                  + (f" · {saved / _r_dt:.1f}장/s" if _r_dt > 0 else ""))
+            return saved, seen_ortho
+
+        # auto-fit-scale: cell 잘림을 발견하면 scale 을 낮춰 재렌더(최대 6회 수렴 — step 하강으로
+        # 0.667 하한=셀 1.5배(192)까지 도달 가능). 미지정이면 1회 렌더.
+        _max_fit = 6 if args.auto_fit_scale else 0
+        # 🚀 부분 재렌더 최적화: 잘린 행동만 다시 굽는다. pass 0 은 전체(_render_only=None),
+        # pass 1+ 은 직전 검사에서 scale 을 낮춘 행동 집합만(_render_only) 재렌더한다. 이렇게 하면
+        # attack 만 잘렸을 때 idle/walk/hit/death/run 을 매 pass 다시 굽는 낭비가 사라진다.
+        _render_only = None
+        for _fit in range(_max_fit + 1):
+            groups = _groups_for(_render_only)
+            # 이번 회차가 실제 렌더하는 프레임 수(진행률·마커 누락 판정용). 전체=total_frames,
+            # 부분=재렌더 대상 행동의 프레임 합. 부분이어도 디스크 파일 총합은 total_frames 로 유지된다.
+            _fit_frames = directions * sum(frames.get(a, 8) for _c, _as in groups for a in _as)
+            if _fit == 0:
+                print(f"\n[1] Blender 렌더 중 … (총 {total_frames}장 = {directions}방향 × {sum(frames.get(a, 8) for a in actions)}프레임)")
+                if multi_model:
+                    print(f"    행동별 모델 — Blender pass {len(groups)}회: "
+                          + " · ".join(f"{os.path.basename(_c)}[{','.join(_as)}]" for _c, _as in groups))
+                    # 🛑 각 pass 는 *자기 행동만* 낱장을 지운다(only_actions). 이번 실행의 행동 목록에
+                    # 없는 옛 낱장(예: 지난 실행의 run_*.png)은 아무 pass 도 안 지우므로 부모가 먼저
+                    # 전부 정리한다 — 단일 모델이면 렌더러가 only_actions=None 으로 하던 일이다.
+                    wipe_stale_frames(frames_dir)
+            else:
+                _scope = (f"잘린 행동만: {', '.join(_render_only)} ({_fit_frames}장)"
+                          if _render_only else "전체")
+                print(f"\n[1·auto-fit {_fit}/{_max_fit}] 조정된 scale 로 재렌더 중 … {_scope}")
+            for _gi, (_gchar, _gacts) in enumerate(groups):
+                pcfg = dict(cfg)
+                pcfg["character"] = _gchar
+                pcfg["action_scales"] = action_scales   # auto-fit 으로 낮춘 scale 반영
+                # 🛑 actions(전체 목록)는 pass 마다 그대로 둔다 — _sheet_render.py 는 ACTIONS 의 첫
+                # 행동(보통 idle) 첫 프레임 자세로 프레이밍을 계산하므로, 부분집합을 주면 그 pass 만
+                # attack 자세 기준으로 프레이밍돼 열 사이 위치·크기가 어긋난다. 렌더 범위는 오직
+                # only_actions 로 좁힌다(기존 auto-fit 부분 재렌더와 같은 방식).
+                pcfg["only_actions"] = (_gacts if multi_model
+                                        else (list(_render_only) if _render_only else None))
+                pcfg["skip_measure"] = (_gchar != authority_char)
+                pcfg["ortho_base"] = (None if _gchar == authority_char else ortho_base)
+                pcfg_path = (os.path.join(outputs, f"_sheet_config_pass{_gi}.json") if multi_model
+                             else cfg_path)
+                json.dump(pcfg, open(pcfg_path, "w"), indent=2)
+                _tag = (f"  (pass {_gi + 1}/{len(groups)} · {os.path.basename(_gchar)}"
+                        f" · {','.join(_gacts)})" if multi_model else "")
+                if multi_model:
+                    print(f"   ▶ pass {_gi + 1}/{len(groups)}: {os.path.basename(_gchar)} "
+                          f"→ {', '.join(_gacts)}", flush=True)
+                _saved, _ortho = _run_blender(
+                    pcfg_path, directions * sum(frames.get(a, 8) for a in _gacts), _tag)
+                if _gchar == authority_char and _ortho:
+                    ortho_base = _ortho
+            if multi_model:
+                # 빌드(_sheet_build.py grid 경로)가 읽는 설정은 *전체 행동* 이어야 모든 열이 배치된다.
+                # pass 설정은 별도 파일이므로 여기서 최종 scale 만 반영해 다시 써 둔다.
+                cfg["action_scales"] = action_scales
+                json.dump(cfg, open(cfg_path, "w"), indent=2)
             # 🛑 검사·packing 입력이 될 *최종 프레임* 을 여기서 확정한다 — align_feet 의 세로 이동으로
             # 칼끝/무기 끝이 새로 잘릴 수 있으므로(팀 지적1·자체 결함1: 과거엔 검사가 정렬 *전*), verify_cells
             # 가 *정렬 후* 프레임을 봐야 최종 atlas 의 실제 잘림을 잡는다. 🛑 align 은 idempotent 가 *아니라*

@@ -392,8 +392,14 @@ def _ensure_preview_helpers():
     #     foot_anchor stays authoritative for compositing (cfg["skip_measure"]). The stale-frame purge
     #     is now scoped by the production helper itself via _wipe_pngs(OUT_FRAMES, ONLY_ACTIONS), which
     #     the preview drives by setting cfg["only_actions"] per pass (see main()) — no purge patch needed.
+    #     🛑 The production helper now ships this guard natively (sheet.py/sheet-win.py gained per-action
+    #     models too), so variant 1 matches it and rewrites it to itself — a no-op. Variant 2 is the
+    #     legacy unguarded wording; patching it again on top of variant 1 would emit a double `if` and
+    #     die with IndentationError, which is why the native form must be tried FIRST.
     render_src = _require_replaced(
         render_src, "skip_measure guard", [
+            ("if not cfg.get(\"skip_measure\"):\n    measure_body_foot()\n",
+             "if not cfg.get(\"skip_measure\"):\n    measure_body_foot()\n"),
             ("measure_body_foot()\n",
              "if not cfg.get(\"skip_measure\"):\n"
              "    measure_body_foot()\n"),
