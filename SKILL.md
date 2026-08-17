@@ -165,6 +165,10 @@ py .claude\skills\texture-packer\scripts\sheet-win.py .\game-assets\characters\p
   (`.blend` 는 rig 검사 면제, `--build-only` 도 면제).
 - 실측(2026-08-17 · pc 16방향 5행동): 단일 모델 47초 vs 행동별 모델 2 pass 43초 —
   두 번째 pass 는 자기 행동만 굽기 때문에 총 시간이 거의 늘지 않는다.
+- **`sheet-preview.py` 도 규약·옵션·프레이밍 상속이 전부 동일** 하다(2026-08-17 3-파일 동기화).
+  본 굽기 전에 `sheet-preview.py <모델>` 로 4방향 미리보기를 먼저 뽑아 어느 열이 어느 모델로
+  나오는지 눈으로 확인하면 된다 — 미리보기가 본 굽기와 *같은* 확대율·측정 권위를 쓰므로
+  "미리보기에선 맞았는데 본 굽기에서 크기가 다르다" 가 생기지 않는다.
 
 - 인자를 전부 생략하면 터미널에서 순서대로 물어본다(대화형).
 - **신규 PC·몬스터는 반드시 16방향**(기본). `--directions 8` 은 boss/minion 규격이거나 legacy 재생성 전용.

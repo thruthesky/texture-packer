@@ -88,13 +88,24 @@ Progress display:
   The render step now prints per-action markers plus percent · fps · ETA (like the production sheet) and
   a timing summary per pass. Use --verbose for the full Blender log.
 
-Per-action character override:
-  --character is the *default* model for every action. To render one action from a different model,
-  pass --character-<action> (e.g. --character-attack other.fbx). Each overridden action is rendered in
-  its own Blender pass (same animation folder, different mesh/rig) and composited into the same sheet.
-  Example — body for idle/walk, a variant for attack:
-    ./scripts/sheet-preview.py --character game-assets/characters/male.fbx --name male \
-      --animations game-assets/animations/default --character-attack game-assets/characters/male_v2.fbx
+Per-action models (one preview sheet baked from several model files):
+  --character is the *default* model for every action; one action can come from a different model.
+  Each such action is rendered in its own Blender pass (same animation folder, different mesh/rig)
+  and composited into the same sheet. Two ways to route an action, same rule as the production bake:
+
+  1. Automatic (no flag) — a sibling file named <model stem>_<action>.<ext> beside the model:
+       game-assets/characters/pc/male/male_claudean/
+         male_claudean.blend           <- idle · walk · death · run
+         male_claudean_attack.blend    <- attack column only, picked up automatically
+       Turn it off with --no-action-models. The <stem>_ prefix matters: the animations in that same
+       folder are named plainly (attack.fbx, walk.fbx), so a prefix-less rule would grab an animation.
+  2. Explicit --character-<action> (wins over the auto-detected sibling):
+       ./scripts/sheet-preview.py --character game-assets/characters/male.fbx --name male \
+         --animations game-assets/animations/default --character-attack game-assets/characters/male_v2.fbx
+
+  The first pass (normally --character) is the authority: it alone measures the body and computes the
+  camera framing, and the other passes inherit that zoom — otherwise a model with a slightly different
+  bbox would render its column at a different character size.
 """
 import argparse, glob, importlib.util, json, os, subprocess, sys, shutil, time, types
 
@@ -651,6 +662,57 @@ def resolve_character(path, role):
     return path
 
 
+def find_action_models(character, actions):
+    """Sibling models named ``<model stem>_<action>.<ext>`` -> ``{action: path}``.
+
+    Same convention (and same reasoning) as the production sheet.py / sheet-win.py, so a preview
+    of an asset folder shows exactly what the real bake will produce: dropping
+    `male_claudean_attack.blend` next to `male_claudean.blend` routes the attack column to that
+    model without passing any flag.
+
+    🛑 The `<stem>_` prefix is the whole point — the same folder holds the *animations* named
+    plainly (`attack.fbx`, `walk.fbx`), so a prefix-less `<action>.<ext>` rule would grab an
+    animation file and try to render it as a character. Extensions are probed with the base
+    model's own first (a .blend asset prefers a .blend sibling).
+    """
+    folder = os.path.dirname(os.path.abspath(character))
+    stem = os.path.splitext(os.path.basename(character))[0]
+    own = os.path.splitext(character)[1].lower()
+    exts = [own] + [e for e in CHAR_EXT if e != own]
+    found = {}
+    for action in actions:
+        for ext in exts:
+            cand = os.path.join(folder, f"{stem}_{action}{ext}")
+            if os.path.isfile(cand):
+                found[action] = cand
+                break
+    return found
+
+
+def wipe_stale_frames(frames_dir, actions=None):
+    """Delete frame PNGs — ``actions=None`` wipes all, a list wipes just those actions.
+
+    Every render pass scopes its own wipe to `only_actions` (so a per-action model pass keeps the
+    other passes' frames), which means frames left over from a *previous* run whose action is not
+    in this run's list are wiped by nobody. In `--pack` mode TexturePacker packs whatever sits in
+    the folder, so those orphans would end up inside the preview atlas. The parent clears them
+    once before the first round. File naming `{action}_{DIR}_{idx}.png` matches the renderer.
+    """
+    prefixes = tuple(f"{a}_" for a in actions) if actions else None
+    for d in (frames_dir, os.path.join(frames_dir, "_foot")):
+        if not os.path.isdir(d):
+            continue
+        for f in os.listdir(d):
+            if not f.endswith(".png"):
+                continue
+            if prefixes and not f.startswith(prefixes):
+                continue
+            try:
+                os.remove(os.path.join(d, f))
+            except OSError:
+                pass
+
+
 def parse_size(s):
     if "x" in s.lower():
         a, b = s.lower().split("x")
@@ -800,7 +862,17 @@ def main():
     for _act in DEFAULT_ACTIONS:
         ap.add_argument(f"--character-{_act}", dest=f"character_{_act}", default=None,
                         help=f"Override the model used for the '{_act}' action only "
-                             f"(default = --character). Same format as --character.")
+                             f"(default = --character). Same format as --character; wins over the "
+                             f"auto-detected <model>_{_act}.<ext> sibling.")
+    ap.add_argument("--action-models", dest="action_models", type=str2bool, nargs="?", const=True,
+                    default=True, metavar="{true,false}",
+                    help="Auto-use per-action sibling models: <model_stem>_<action>.<ext> next to "
+                         "--character renders that action (e.g. male_claudean_attack.blend -> "
+                         "attack). Default true, same rule as the production sheet.py/sheet-win.py. "
+                         "Animation files there are named <action>.fbx (no stem prefix) so they are "
+                         "never mistaken for models.")
+    ap.add_argument("--no-action-models", dest="action_models", action="store_const", const=False,
+                    help="Ignore <model_stem>_<action> sibling models (alias of --action-models false).")
     ap.add_argument("--animations", default=None,
                     help="Mixamo animation source ({action}.fbx/.glb). Accepts a variant NAME (e.g. "
                          "`default` -> game-assets/animations/default) or a path, same as "
@@ -1049,10 +1121,17 @@ def main():
     args.character = resolve_character(args.character, "character (--character)")
     char_ext = os.path.splitext(args.character)[1].lower()
 
-    # -- per-action character overrides (--character-<action>) --
-    # Map every action -> the model that renders it (default = args.character). An action whose
-    # --character-<action> is set is validated and routed to that model in its own render pass.
+    # -- per-action character overrides (auto-detected siblings, then --character-<action>) --
+    # Map every action -> the model that renders it (default = args.character). An overridden
+    # action is validated and routed to that model in its own render pass.
     action_character = {a: args.character for a in actions}
+    if args.action_models:
+        # <stem>_<action>.<ext> beside the model — the same auto-detection the production bake
+        # does, so the preview matches what sheet.py/sheet-win.py will produce.
+        for a, p in find_action_models(args.character, actions).items():
+            action_character[a] = resolve_character(p, f"character (auto <stem>_{a})")
+            print(f"  info: per-action model auto-detected: {a} -> "
+                  f"{os.path.basename(action_character[a])}")
     for a in DEFAULT_ACTIONS:
         ov = getattr(args, f"character_{a}", None)
         if ov:
@@ -1204,7 +1283,11 @@ def main():
             continue   # default character may render nothing if every action is overridden
         pcfg = dict(cfg_base)
         pcfg["character"] = char
-        pcfg["actions"] = pass_actions
+        # 🛑 Keep the FULL action list on every pass — the render helper frames the camera on the
+        # first frame of ACTIONS[0] (normally idle), so handing a pass only ["attack"] would frame
+        # it on the attack pose and that column would land at a different size/offset than the rest.
+        # The render scope is narrowed purely by only_actions (same rule as the production bake).
+        pcfg["actions"] = list(actions)
         # Scope this pass's render + stale-frame purge to just its actions. The production helper
         # purges via _wipe_pngs(OUT_FRAMES, ONLY_ACTIONS) and renders only ONLY_ACTIONS∩ACTIONS, so
         # setting only_actions here keeps an earlier base/default-character pass's frames intact while
@@ -1285,6 +1368,16 @@ def main():
         multipass = len(render_passes) > 1
         _fit, _max_fit = 0, 6
         _render_only = None    # None = render every action; else the clipped subset to re-render
+        # The authority pass is render_passes[0] (normally --character) and is fixed here, not
+        # re-picked per round: it is the only pass that measures (skip_measure) and the only one that
+        # computes the camera framing. Every other pass inherits that framing via cfg["ortho_base"],
+        # because a per-action model with a slightly different body bbox would otherwise re-zoom and
+        # its column alone would show a bigger/smaller character. Captured from the ####FRAMING line.
+        authority_char = render_passes[0][0] if render_passes else None
+        ortho_base = None
+        # Frames of actions that are NOT in this run's list belong to nobody's only_actions, so no
+        # pass wipes them — and --pack packs whatever is in the folder. Clear them once up front.
+        wipe_stale_frames(frames_dir)
         while True:
           for pi, (pchar, pacts, pcfg_path) in enumerate(render_passes):
             pass_acts = pacts if _render_only is None else [a for a in pacts if a in _render_only]
@@ -1295,6 +1388,7 @@ def main():
             _pcfg = json.load(open(pcfg_path))
             _pcfg["action_scales"] = action_scales
             _pcfg["only_actions"] = pass_acts
+            _pcfg["ortho_base"] = (None if pchar == authority_char else ortho_base)
             json.dump(_pcfg, open(pcfg_path, "w"), indent=2)
             pass_frames = directions * sum(frames.get(a, PREVIEW_FRAMES_PER_ACTION) for a in pass_acts)
             tag = (f"  (pass {pi + 1}/{len(render_passes)} · {os.path.basename(pchar)})" if multipass else "")
@@ -1311,11 +1405,19 @@ def main():
             )
             # Concise progress: every 12 frames print percent · speed · ETA · current action.
             # --verbose prints the full Blender log instead.
-            saved, errs, render_done, cur_action = 0, [], False, ""
+            saved, errs, render_done, cur_action, seen_ortho = 0, [], False, "", None
             for line in proc.stdout:
                 line = line.rstrip()
                 if line.startswith("####RENDER_DONE"):
                     render_done = True
+                if line.startswith("####FRAMING "):
+                    # Grab the authority pass's zoom so the per-action model passes reuse it.
+                    for _tok in line.split():
+                        if _tok.startswith("ortho_base="):
+                            try:
+                                seen_ortho = float(_tok.split("=", 1)[1])
+                            except ValueError:
+                                pass
                 if args.verbose:
                     print(line); continue
                 if line.startswith("####ACTION "):
@@ -1355,6 +1457,8 @@ def main():
                 sys.exit("render failed")
             print(f"   OK render done — {actual_frames} frames · {_fmt_dur(_r_dt)}"
                   + (f" · {actual_frames / _r_dt:.1f} fps" if _r_dt > 0 else ""))
+            if pchar == authority_char and seen_ortho:
+                ortho_base = seen_ortho   # later per-action model passes reuse this framing
 
           # ── foot alignment + auto-fit (pack path only; the grid builder aligns internally) ──
           if not args.pack:
